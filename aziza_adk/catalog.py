@@ -14,6 +14,7 @@ two share it rather than drifting apart in two implementations.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -157,6 +158,25 @@ def _widest(said: str, row: T, *, contained: bool) -> int:
         if len(term := fold(raw)) >= 3 and (term in said if contained else said in term)
     ]
     return max(widths, default=0)
+
+
+def mentions(said: str, catalog: Sequence[T]) -> T | None:
+    """The row whose name or alias `said` contains as a WHOLE WORD, or None.
+
+    A different question from `resolve`: not what a phrase names, but whether it names work at
+    all. Only the said-in-full direction, and on word boundaries — the fragment direction reads
+    "ritz" out of "Yaritza" and "pestanas" out of "Ana", and refusing a client for her own name is
+    worse than the mistake this catches.
+    """
+    folded = fold(said or "")
+    if not folded:
+        return None
+    for row in catalog:
+        for raw in (row.name, *row.aliases):
+            term = fold(raw)
+            if len(term) >= 3 and re.search(rf"(?<!\w){re.escape(term)}(?!\w)", folded):
+                return row
+    return None
 
 
 def names(catalog: Sequence[T]) -> tuple[str, ...]:

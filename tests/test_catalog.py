@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from aziza_adk import catalog_data
-from aziza_adk.catalog import MALE, Product, Service, names, price_for, resolve
+from aziza_adk.catalog import MALE, Product, Service, mentions, names, price_for, resolve
 
 #: A SYNTHETIC catalog, small enough that each rule can be seen firing on its own. The salon's
 #: real one is exercised at the bottom of this file, where the names overlap far more.
@@ -202,6 +202,20 @@ def _real_products() -> tuple[Product, ...]:
     )
 
 
+def _real_services() -> tuple[Service, ...]:
+    return tuple(
+        Service(
+            service_ref=s["service_ref"],
+            name=s["name"],
+            discipline=s["discipline"],
+            price_female=Decimal(s["price_female"]) if s["price_female"] else None,
+            price_male=Decimal(s["price_male"]) if s["price_male"] else None,
+            aliases=tuple(a for a in s["aliases"].split("|") if a),
+        )
+        for s in catalog_data.SERVICES
+    )
+
+
 def test_the_same_resolver_serves_products():
     """Products reuse the service resolver rather than a second copy of it, so ambiguity and
     aliasing behave identically for both."""
@@ -221,3 +235,27 @@ def test_a_bare_brand_resolves_to_the_row_that_bears_it():
     row rather than an ambiguity with Doritos Dinamita."""
     assert resolve("ritz", _real_products()).match.name == "Ritz"
     assert resolve("doritos", _real_products()).match.name == "Doritos"
+
+
+# --- [6] Is this phrase a client's name, or the work? ------------------------------------------
+
+
+def test_a_phrase_that_names_the_work_is_recognized():
+    """The failure this catches: a ticket opened as "Axilas y bc" prices whoever that is by the
+    name table and prints it on the receipt, and nothing downstream can tell it from a client."""
+    assert mentions("Axilas y bc", _real_services()).name == "Axilas"
+    assert mentions("Doritos", _real_products()).name == "Doritos"
+
+
+def test_a_client_keeps_her_name_when_it_merely_contains_one():
+    """Word boundaries, not substrings: "Yaritza" contains "ritz" and "Pestañas" contains "ana".
+    Refusing a client for her own name is worse than the mistake this guard catches."""
+    for real in ("Ana", "Yaritza", "Rosa María", "Carmen", "Altagracia", "Mercedes"):
+        assert mentions(real, _real_services()) is None, real
+        assert mentions(real, _real_products()) is None, real
+
+
+def test_a_phrase_naming_nothing_the_salon_sells_is_left_alone():
+    """`mentions` answers only for terms the catalog actually holds. Bare "manicura" is an alias
+    of nothing by design, so this is a bound on the guard rather than a gap in it."""
+    assert mentions("Carmen", _real_services()) is None
