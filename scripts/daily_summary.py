@@ -62,6 +62,8 @@ def run(day: dt.date) -> dict[str, int]:
         for person in queries.specialists_billed_on(conn, day):
             totals = queries.day_totals(conn, person["id"], day)
             services_total, tips = totals["services_total"], totals["tips"]
+            products_total, owed = totals["products_total"], totals["debt_balance"]
+            # On services alone. Products are reported to her and pay her nothing (§7).
             earned = money.commission(services_total, config.COMMISSION_PCT)
 
             claimed = queries.claim_summary(
@@ -71,13 +73,17 @@ def run(day: dt.date) -> dict[str, int]:
                 services_total=services_total,
                 commission=earned,
                 tips=tips,
+                products_total=products_total,
+                debt_balance=owed,
             )
             if not claimed:
                 conn.rollback()
                 counts["already_sent"] += 1
                 continue
 
-            text = tools.summary_text(person["full_name"], day, services_total, tips)
+            text = tools.summary_text(
+                person["full_name"], day, services_total, tips, products_total, owed
+            )
             if not _send(person["telegram_user_id"], text):
                 conn.rollback()  # the claim goes back; the next run retries this person
                 counts["send_failed"] += 1

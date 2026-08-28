@@ -17,7 +17,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from aziza_adk import config
-from aziza_adk.catalog import Service
+from aziza_adk.catalog import Product, Service
 from aziza_adk.receipts import Line, Payment
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
@@ -88,7 +88,8 @@ def service_catalog(conn: psycopg.Connection) -> list[Service]:
     rows = fetchall(
         conn,
         """
-        SELECT sv.service_ref, sv.name, d.code AS discipline, sv.price, sv.aliases
+        SELECT sv.service_ref, sv.name, d.code AS discipline,
+               sv.price_female, sv.price_male, sv.aliases
         FROM services sv JOIN disciplines d ON d.id = sv.discipline_id
         WHERE sv.active
         ORDER BY d.code, sv.name
@@ -99,7 +100,29 @@ def service_catalog(conn: psycopg.Connection) -> list[Service]:
             service_ref=row["service_ref"],
             name=row["name"],
             discipline=row["discipline"],
-            price=row["price"],
+            price_female=row["price_female"],
+            price_male=row["price_male"],
+            aliases=tuple(a for a in (row["aliases"] or "").split("|") if a),
+        )
+        for row in rows
+    ]
+
+
+def product_catalog(conn: psycopg.Connection) -> list[Product]:
+    """Every active product. No discipline join: selling one is not authorized against a skill."""
+    rows = fetchall(
+        conn,
+        """
+        SELECT product_ref, name, price_client, price_specialist, aliases
+        FROM products WHERE active ORDER BY name
+        """,
+    )
+    return [
+        Product(
+            product_ref=row["product_ref"],
+            name=row["name"],
+            price_client=row["price_client"],
+            price_specialist=row["price_specialist"],
             aliases=tuple(a for a in (row["aliases"] or "").split("|") if a),
         )
         for row in rows
@@ -120,33 +143,121 @@ def open_sale(conn: psycopg.Connection, specialist_id: int) -> dict | None:
     """This specialist's open ticket, or None. At most one exists — see the partial index."""
     return fetchone(
         conn,
-        "SELECT id, sale_ref, client_name, services_total FROM sales "
+        "SELECT id, sale_ref, client_name, client_gender, gender_source, "
+        "       services_total, products_total FROM sales "
         "WHERE specialist_id = %(sid)s AND status = 'open'",
         {"sid": specialist_id},
     )
 
 
-def create_sale(conn: psycopg.Connection, specialist_id: int, client_name: str) -> dict:
+def create_sale(
+    conn: psycopg.Connection,
+    specialist_id: int,
+    client_name: str,
+    *,
+    client_gender: str,
+    gender_source: str,
+) -> dict:
     """Open a ticket. Raises `psycopg.errors.UniqueViolation` when one is already open —
     the index is the guarantee, and the tool's own check is only there to say it kindly."""
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO sales (sale_ref, specialist_id, client_name) "
-            "VALUES (gen_random_uuid()::text, %(sid)s, %(name)s) "
-            "RETURNING id, sale_ref, client_name, services_total",
-            {"sid": specialist_id, "name": client_name},
+            "INSERT INTO sales (sale_ref, specialist_id, client_name, client_gender, "
+            "                   gender_source) "
+            "VALUES (gen_random_uuid()::text, %(sid)s, %(name)s, %(gender)s, %(source)s) "
+            "RETURNING id, sale_ref, client_name, client_gender, gender_source, "
+            "          services_total, products_total",
+            {
+                "sid": specialist_id,
+                "name": client_name,
+                "gender": client_gender,
+                "source": gender_source,
+            },
         )
         row = cur.fetchone()
     conn.commit()
     return row
 
 
-def add_line(conn: psycopg.Connection, sale_id: int, service: Service, quantity: int) -> None:
+#: Which column a client reads. A fixed mapping, never a value that reached us from outside.
+_PRICE_COLUMN = {"female": "price_female", "male": "price_male"}
+
+
+def unpriceable_lines(conn: psycopg.Connection, sale_id: int, gender: str) -> list[str]:
+    """Services already on this ticket that the salon does not offer to that client.
+
+    Asked BEFORE re-pricing: the column is NOT NULL on the line, so a service with no price for
+    the new client cannot simply be re-priced, and silently dropping the line would change a
+    ticket the specialist has read. She is told which line, and removes it herself.
+    """
+    column = _PRICE_COLUMN[gender]
+    rows = fetchall(
+        conn,
+        f"SELECT l.service_name FROM sale_lines l JOIN services sv ON sv.id = l.service_id "
+        f"WHERE l.sale_id = %(sale)s AND sv.{column} IS NULL ORDER BY l.id",
+        {"sale": sale_id},
+    )
+    return [r["service_name"] for r in rows]
+
+
+def gender_affects_ticket(conn: psycopg.Connection, sale_id: int) -> bool:
+    """Whether any service on this ticket is priced differently for different clients.
+
+    What decides if the ticket names the client at all: on an acrylic-only ticket both columns
+    hold the same amount, so saying which one was read tells the specialist nothing.
+    """
+    row = fetchone(
+        conn,
+        "SELECT EXISTS (SELECT 1 FROM sale_lines l JOIN services sv ON sv.id = l.service_id "
+        "               WHERE l.sale_id = %(sale)s "
+        "                 AND sv.price_female IS DISTINCT FROM sv.price_male) AS differs",
+        {"sale": sale_id},
+    )
+    return bool(row and row["differs"])
+
+
+def set_sale_gender(
+    conn: psycopg.Connection, sale_id: int, gender: str, gender_source: str
+) -> None:
+    """Re-price every line on the ticket for a different client, in one transaction.
+
+    The snapshot rule on sale_lines protects a quote from a later CATALOG edit; this is not one.
+    The client was wrong, so the quote was wrong, and a ticket whose lines disagreed with its own
+    client would be the actual defect.
+    """
+    column = _PRICE_COLUMN[gender]
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE sale_lines l SET unit_price = sv.{column}, "
+            f"                        line_total = sv.{column} * l.quantity "
+            f"FROM services sv WHERE sv.id = l.service_id AND l.sale_id = %(sale)s",
+            {"sale": sale_id},
+        )
+        cur.execute(
+            "UPDATE sales SET client_gender = %(gender)s, gender_source = %(source)s, "
+            "  services_total = (SELECT COALESCE(SUM(line_total), 0) FROM sale_lines "
+            "                    WHERE sale_id = %(sale)s) "
+            "WHERE id = %(sale)s",
+            {"sale": sale_id, "gender": gender, "source": gender_source},
+        )
+    conn.commit()
+
+
+def add_line(
+    conn: psycopg.Connection,
+    sale_id: int,
+    service: Service,
+    quantity: int,
+    unit_price: Decimal,
+) -> None:
     """Add a service at the CATALOG price, snapshotting it, and recompute the ticket's total.
+
+    `unit_price` is the column the ticket's client reads, chosen by `catalog.price_for` — still
+    off the catalog row, never from the model.
 
     One transaction, so a line can never exist against a stale total.
     """
-    line_total = service.price * Decimal(quantity)
+    line_total = unit_price * Decimal(quantity)
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO sale_lines "
@@ -156,7 +267,7 @@ def add_line(conn: psycopg.Connection, sale_id: int, service: Service, quantity:
             {
                 "sale": sale_id,
                 "ref": service.service_ref,
-                "price": service.price,
+                "price": unit_price,
                 "qty": quantity,
                 "total": line_total,
             },
@@ -187,6 +298,116 @@ def sale_lines(conn: psycopg.Connection, sale_id: int) -> list[Line]:
         )
         for r in rows
     ]
+
+
+def add_product_line(
+    conn: psycopg.Connection, sale_id: int, product: Product, quantity: int
+) -> None:
+    """Sell a product on the open ticket, at the client price, and recompute products_total.
+
+    Writes to its own table and its own total. Nothing here touches services_total, which is what
+    keeps a product out of the commission base (§7).
+    """
+    line_total = product.price_client * Decimal(quantity)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO sale_product_lines "
+            "  (sale_id, product_id, product_name, unit_price, quantity, line_total) "
+            "SELECT %(sale)s, p.id, p.name, %(price)s, %(qty)s, %(total)s "
+            "FROM products p WHERE p.product_ref = %(ref)s",
+            {
+                "sale": sale_id,
+                "ref": product.product_ref,
+                "price": product.price_client,
+                "qty": quantity,
+                "total": line_total,
+            },
+        )
+        cur.execute(
+            "UPDATE sales SET products_total = "
+            "  (SELECT COALESCE(SUM(line_total), 0) FROM sale_product_lines "
+            "   WHERE sale_id = %(sale)s) "
+            "WHERE id = %(sale)s",
+            {"sale": sale_id},
+        )
+    conn.commit()
+
+
+def sale_product_lines(conn: psycopg.Connection, sale_id: int) -> list[Line]:
+    """The ticket's products, in the order they were added."""
+    rows = fetchall(
+        conn,
+        "SELECT product_name, quantity, unit_price, line_total FROM sale_product_lines "
+        "WHERE sale_id = %(sale)s ORDER BY id",
+        {"sale": sale_id},
+    )
+    return [
+        Line(
+            name=r["product_name"],
+            quantity=r["quantity"],
+            unit_price=r["unit_price"],
+            line_total=r["line_total"],
+        )
+        for r in rows
+    ]
+
+
+def record_purchase(
+    conn: psycopg.Connection,
+    specialist_id: int,
+    product: Product,
+    quantity: int,
+    business_date: dt.date,
+) -> Decimal:
+    """Debit a specialist for what she took for herself, and answer with the amount.
+
+    At `price_specialist`, which is not a price any client can be given.
+    """
+    amount = product.price_specialist * Decimal(quantity)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO specialist_ledger "
+            "  (specialist_id, kind, product_id, description, amount, business_date) "
+            "SELECT %(sid)s, 'purchase', p.id, p.name, %(amount)s, %(day)s "
+            "FROM products p WHERE p.product_ref = %(ref)s",
+            {
+                "sid": specialist_id,
+                "ref": product.product_ref,
+                "amount": amount,
+                "day": business_date,
+            },
+        )
+    conn.commit()
+    return amount
+
+
+def record_settlement(
+    conn: psycopg.Connection,
+    specialist_id: int,
+    amount: Decimal,
+    business_date: dt.date,
+    description: str,
+) -> None:
+    """Credit a payment against what she owes. Partial is ordinary, not an exception."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO specialist_ledger "
+            "  (specialist_id, kind, description, amount, business_date) "
+            "VALUES (%(sid)s, 'payment', %(desc)s, %(amount)s, %(day)s)",
+            {"sid": specialist_id, "desc": description, "amount": amount, "day": business_date},
+        )
+    conn.commit()
+
+
+def debt_balance(conn: psycopg.Connection, specialist_id: int) -> Decimal:
+    """Everything she owes right now. Derived from the ledger, never stored."""
+    row = fetchone(
+        conn,
+        "SELECT COALESCE(SUM(CASE WHEN kind = 'purchase' THEN amount ELSE -amount END), 0) "
+        "  AS balance FROM specialist_ledger WHERE specialist_id = %(sid)s",
+        {"sid": specialist_id},
+    )
+    return row["balance"] if row else Decimal("0.00")
 
 
 def void_sale(conn: psycopg.Connection, sale_id: int) -> None:
@@ -252,7 +473,14 @@ def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.d
                       AND status = 'paid'), 0) AS services_total,
           COALESCE((SELECT SUM(p.tip) FROM sale_payments p JOIN sales s ON s.id = p.sale_id
                     WHERE s.specialist_id = %(sid)s AND s.business_date = %(day)s
-                      AND s.status = 'paid'), 0) AS tips
+                      AND s.status = 'paid'), 0) AS tips,
+          COALESCE((SELECT SUM(products_total) FROM sales
+                    WHERE specialist_id = %(sid)s AND business_date = %(day)s
+                      AND status = 'paid'), 0) AS products_total,
+          -- Her WHOLE outstanding balance, not this day's purchases: what she owes is what she
+          -- carries, and reporting only today's would read as if the rest were settled.
+          COALESCE((SELECT SUM(CASE WHEN kind = 'purchase' THEN amount ELSE -amount END)
+                    FROM specialist_ledger WHERE specialist_id = %(sid)s), 0) AS debt_balance
         """,
         {"sid": specialist_id, "day": business_date},
     )
@@ -280,6 +508,8 @@ def claim_summary(
     services_total: Decimal,
     commission: Decimal,
     tips: Decimal,
+    products_total: Decimal,
+    debt_balance: Decimal,
 ) -> bool:
     """Claim the right to send one specialist's end-of-day message. True when it is ours.
 
@@ -290,8 +520,10 @@ def claim_summary(
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO daily_summaries "
-            "  (specialist_id, business_date, services_total, commission, tips) "
-            "VALUES (%(sid)s, %(day)s, %(services)s, %(commission)s, %(tips)s) "
+            "  (specialist_id, business_date, services_total, commission, tips, "
+            "   products_total, debt_balance) "
+            "VALUES (%(sid)s, %(day)s, %(services)s, %(commission)s, %(tips)s, "
+            "        %(products)s, %(debt)s) "
             "ON CONFLICT (specialist_id, business_date) DO NOTHING",
             {
                 "sid": specialist_id,
@@ -299,6 +531,8 @@ def claim_summary(
                 "services": services_total,
                 "commission": commission,
                 "tips": tips,
+                "products": products_total,
+                "debt": debt_balance,
             },
         )
         return cur.rowcount == 1

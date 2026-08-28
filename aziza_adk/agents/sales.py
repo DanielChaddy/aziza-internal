@@ -23,9 +23,13 @@ SALES_SPEC = AgentSpec(
     tools=(
         tools.start_ticket,
         tools.add_service,
+        tools.set_client_gender,
+        tools.sell_product,
         tools.show_ticket,
         tools.void_ticket,
         tools.record_payment,
+        tools.buy_product,
+        tools.settle_debt,
         tools.my_day,
     ),
     before_tool=guards.before_tool_guard,

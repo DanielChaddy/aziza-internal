@@ -41,12 +41,12 @@ def broken_outbox(monkeypatch):
 
 @pytest.fixture
 def sold(ctx, make_specialist):
-    """A specialist who billed RD$800.00 and was tipped RD$200.00 today."""
+    """A specialist who billed RD$300.00 and was tipped RD$200.00 today."""
     who = make_specialist("nails", full_name="Yamilé Sentinel")
     context = ctx(who)
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    tools.record_payment("efectivo", "800", "200", context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    tools.record_payment("efectivo", "300", "200", context)
     return who
 
 
@@ -82,8 +82,8 @@ def test_a_specialist_who_billed_nothing_gets_nothing(make_specialist, live, out
 def test_an_open_ticket_is_not_a_days_work(ctx, make_specialist, live, outbox):
     """Only a closed sale counts; a ticket left open is money not yet taken."""
     context = ctx(make_specialist("nails"))
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
     assert daily_summary.run(_today())["sent"] == 0
 
 
@@ -93,10 +93,10 @@ def test_an_open_ticket_is_not_a_days_work(ctx, make_specialist, live, outbox):
 def test_the_message_carries_all_four_figures(sold, live, outbox):
     daily_summary.run(_today())
     body = outbox[0][1]
-    assert "Servicios: RD$800.00" in body
-    assert f"Tu comisión ({config.COMMISSION_PCT}%): RD$320.00" in body
+    assert "Servicios: RD$300.00" in body
+    assert f"Tu comisión ({config.COMMISSION_PCT}%): RD$120.00" in body
     assert "Propinas: RD$200.00" in body
-    assert "Total para ti: RD$520.00" in body
+    assert "Total para ti: RD$320.00" in body
 
 
 def test_the_message_and_my_day_cannot_disagree(sold, ctx, live, outbox):
@@ -114,8 +114,8 @@ def test_the_recorded_claim_holds_the_figures_that_were_sent(sold, live, outbox,
         {"s": sold["id"]},
     )
     assert (row["services_total"], row["commission"], row["tips"]) == (
-        Decimal("800.00"),
-        Decimal("320.00"),
+        Decimal("300.00"),
+        Decimal("120.00"),
         Decimal("200.00"),
     )
 
@@ -124,11 +124,14 @@ def test_the_recorded_claim_holds_the_figures_that_were_sent(sold, live, outbox,
 
 
 def test_a_second_run_sends_nothing(sold, live, outbox, conn):
+    """Scoped to this specialist's claim rather than a tally over the whole database: any other
+    sale recorded today — a demo driven by hand, say — is not this test's subject."""
     daily_summary.run(_today())
     outbox.clear()
     counts = daily_summary.run(_today())
-    assert counts == {"sent": 0, "already_sent": 1, "send_failed": 0}
+    assert counts["sent"] == 0
     assert outbox == []
+    assert _claims(conn, sold["id"]) == 1
 
 
 def test_a_failed_send_records_nothing_so_the_next_run_retries(sold, live, broken_outbox, conn):

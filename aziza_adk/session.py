@@ -6,6 +6,7 @@ the other. Values are plain strings because the served session store persists th
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from conversation_core import state
@@ -53,18 +54,29 @@ def remember_specialist(
     )
 
 
-def was_quoted(context: Any, sale_ref: str) -> bool:
-    """Has THIS ticket been shown to the specialist, in full, with its total?
+def was_quoted(context: Any, sale_ref: str, total: Decimal) -> bool:
+    """Has THIS ticket, at THIS total, been shown to the specialist in full?
 
     Keyed on the ticket rather than a flag, and that is the whole point: a flag set while quoting
     one ticket would authorize charging the next one, which is a different client and a different
-    amount. Fails closed on anything it cannot read.
+    amount.
+
+    Keyed on the TOTAL as well, so the gate cannot be satisfied by a figure that has since
+    changed. Re-pricing a ticket for a different client moves it by as much as RD$550, and a gate
+    that only knew the ticket's identity would have gone on authorizing the amount she saw before
+    the correction. Every path that changes a total re-shows it; this is what makes that a
+    property rather than a habit.
+
+    Fails closed on anything it cannot read.
     """
-    return bool(sale_ref) and state.mapping(context, QUOTED_KEY).get("sale_ref") == sale_ref
+    if not sale_ref:
+        return False
+    seen = state.mapping(context, QUOTED_KEY)
+    return seen.get("sale_ref") == sale_ref and seen.get("total") == str(total)
 
 
-def remember_quote(context: Any, sale_ref: str) -> None:
-    _write(context, QUOTED_KEY, {"sale_ref": sale_ref})
+def remember_quote(context: Any, sale_ref: str, total: Decimal) -> None:
+    _write(context, QUOTED_KEY, {"sale_ref": sale_ref, "total": str(total)})
 
 
 def _write(context: Any, key: str, value: dict) -> None:

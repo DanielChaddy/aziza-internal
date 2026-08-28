@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Apply the schema and load the fictitious salon. Idempotent and re-runnable.
+"""Apply the schema, load the salon's catalog, and register the demo specialists. Idempotent.
 
-The dataset is `aziza_adk/demo_data.py`, which the tests read too — so seeding and asserting
-cannot disagree about who works here.
+Two datasets, and the split is the point: `aziza_adk/catalog_data.py` is what the salon really
+sells and charges, while `aziza_adk/demo_data.py` is three invented people with invented Telegram
+ids. Both are read by the tests too, so seeding and asserting cannot disagree.
+
+Until the salon's own specialists are registered, this leaves a database nobody can drive: an
+unregistered sender is refused at the edge before the model runs.
 """
 
 from __future__ import annotations
@@ -12,28 +16,42 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aziza_adk import demo_data, queries  # noqa: E402
+from aziza_adk import catalog_data, demo_data, queries  # noqa: E402
 
 
 def main() -> int:
     with queries.connect() as conn:
         queries.apply_schema(conn)
         with conn.cursor() as cur:
-            for row in demo_data.DISCIPLINES:
+            for row in catalog_data.DISCIPLINES:
                 cur.execute(
                     "INSERT INTO disciplines (code, name) VALUES (%(code)s, %(name)s) "
                     "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name",
                     row,
                 )
-            for row in demo_data.SERVICES:
+            for row in catalog_data.SERVICES:
                 cur.execute(
                     "INSERT INTO services "
-                    "  (service_ref, name, discipline_id, price, aliases) "
-                    "SELECT %(service_ref)s, %(name)s, d.id, %(price)s, %(aliases)s "
+                    "  (service_ref, name, discipline_id, price_female, price_male, aliases) "
+                    "SELECT %(service_ref)s, %(name)s, d.id, %(price_female)s, %(price_male)s, "
+                    "       %(aliases)s "
                     "FROM disciplines d WHERE d.code = %(discipline)s "
                     "ON CONFLICT (service_ref) DO UPDATE SET "
                     "  name = EXCLUDED.name, discipline_id = EXCLUDED.discipline_id, "
-                    "  price = EXCLUDED.price, aliases = EXCLUDED.aliases, active = TRUE",
+                    "  price_female = EXCLUDED.price_female, price_male = EXCLUDED.price_male, "
+                    "  aliases = EXCLUDED.aliases, active = TRUE",
+                    row,
+                )
+            for row in catalog_data.PRODUCTS:
+                cur.execute(
+                    "INSERT INTO products "
+                    "  (product_ref, name, price_client, price_specialist, aliases) "
+                    "VALUES (%(product_ref)s, %(name)s, %(price_client)s, "
+                    "        %(price_specialist)s, %(aliases)s) "
+                    "ON CONFLICT (product_ref) DO UPDATE SET "
+                    "  name = EXCLUDED.name, price_client = EXCLUDED.price_client, "
+                    "  price_specialist = EXCLUDED.price_specialist, "
+                    "  aliases = EXCLUDED.aliases, active = TRUE",
                     row,
                 )
             for person in demo_data.SPECIALISTS:
@@ -63,8 +81,9 @@ def main() -> int:
         conn.commit()
 
     print(
-        f"seeded {len(demo_data.SPECIALISTS)} specialists, "
-        f"{len(demo_data.SERVICES)} services, {len(demo_data.DISCIPLINES)} disciplines"
+        f"seeded {len(catalog_data.SERVICES)} services, {len(catalog_data.PRODUCTS)} products, "
+        f"{len(catalog_data.DISCIPLINES)} disciplines, "
+        f"{len(demo_data.SPECIALISTS)} demo specialists"
     )
     return 0
 

@@ -103,11 +103,15 @@ helm -n z-aziza upgrade --install aziza deploy/helm/aziza \
   --set image.tag=$(git rev-parse --short HEAD) --set dbBuild.enabled=true --wait
 ```
 
-**It seeds the fictitious salon.** `scripts/seed_mock.py` applies `db/schema.sql` and then loads
-`aziza_adk/demo_data.py`, and there is no schema-only path. So a fresh release comes up with
-invented specialists holding invented Telegram ids, which is why `summary.sendMode` defaults to
-`simulate`: nothing can receive a live message yet. The salon's real catalog and its specialists'
-real Telegram ids are both still open.
+**It loads the salon's real catalog, and three invented specialists.** `scripts/seed_catalog.py`
+applies `db/schema.sql`, then `aziza_adk/catalog_data.py` — the salon's own services and products
+at the salon's own prices — and then `aziza_adk/demo_data.py`, which is three people who do not
+exist holding Telegram ids nobody owns. There is no schema-only path.
+
+So a fresh release comes up able to price everything correctly and unable to serve anyone: an
+unregistered sender is refused at the edge before the model runs. That is also why
+`summary.sendMode` defaults to `simulate` — nothing can receive a live message yet. Registering
+the salon's own specialists with their real Telegram ids is what remains.
 
 ## What is not routed
 

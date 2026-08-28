@@ -21,6 +21,17 @@ from aziza_adk.money import ZERO, rd
 #: carry; only the values are Spanish.
 METHOD_LABELS = {"cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia"}
 
+#: How the ticket names which price column it read. Shown only when the ticket holds a service
+#: whose two prices differ — on an acrylic-only ticket the client makes no difference to any
+#: figure, and a label there is noise.
+GENDER_LABELS = {"female": "femenino", "male": "masculino"}
+
+#: Said only when the name was not recognized and the female column was applied anyway
+#: (aziza_adk/names.py). A matched name gets no notice: it is not an assumption.
+GENDER_ASSUMED_TEXT = (
+    "No reconocí el nombre, así que usé precio femenino. Si es hombre, dime y lo corrijo."
+)
+
 _MONTHS = (
     "enero",
     "febrero",
@@ -40,7 +51,7 @@ _WEEKDAYS = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "d
 
 @dataclass(frozen=True)
 class Line:
-    """One service on a ticket, at the price frozen when it was added."""
+    """One service or product on a ticket, at the price frozen when it was added."""
 
     name: str
     quantity: int
@@ -60,15 +71,42 @@ def spanish_date(day: dt.date) -> str:
     return f"{_WEEKDAYS[day.weekday()]} {day.day} de {_MONTHS[day.month - 1]} de {day.year}"
 
 
-def render_ticket(client_name: str, lines: Sequence[Line], total: Decimal) -> str:
-    """The open ticket: who it is for, what was done, and what it comes to."""
-    return "\n".join(
-        [f"Cuenta de {client_name}", "", *_line_rows(lines), "", f"Total: {rd(total)}"]
-    )
+def render_ticket(
+    client_name: str,
+    lines: Sequence[Line],
+    total: Decimal,
+    *,
+    product_lines: Sequence[Line] = (),
+    products_total: Decimal = ZERO,
+    gender_label: str | None = None,
+    assumed: bool = False,
+) -> str:
+    """The open ticket: who it is for, what was done, what was sold, and what it comes to.
+
+    `gender_label` is passed only when a service on this ticket is priced differently for
+    different clients, and `assumed` only when nobody recognized the name — so the specialist is
+    told what to check exactly when checking it could change a figure.
+    """
+    rows = [f"Cuenta de {client_name}"]
+    if gender_label:
+        rows.append(f"Precio: {gender_label}")
+    rows += ["", *_line_rows(lines)]
+    if product_lines:
+        rows += ["", "Productos:", *_line_rows(product_lines)]
+    rows += ["", f"Total: {rd(total + products_total)}"]
+    if assumed and gender_label:
+        rows += ["", GENDER_ASSUMED_TEXT]
+    return "\n".join(rows)
 
 
 def render_receipt(
-    client_name: str, lines: Sequence[Line], total: Decimal, payments: Sequence[Payment]
+    client_name: str,
+    lines: Sequence[Line],
+    total: Decimal,
+    payments: Sequence[Payment],
+    *,
+    product_lines: Sequence[Line] = (),
+    products_total: Decimal = ZERO,
 ) -> str:
     """The closed sale. The tip is its own line and is never folded into the total: it is not
     the salon's money and it is not part of what commission is taken on."""
@@ -77,8 +115,12 @@ def render_receipt(
         f"Cobrado — {client_name}",
         "",
         *_line_rows(lines),
+    ]
+    if product_lines:
+        rows += ["", "Productos:", *_line_rows(product_lines)]
+    rows += [
         "",
-        f"Total: {rd(total)}",
+        f"Total: {rd(total + products_total)}",
         "",
         "Pagos:",
         *(f"• {METHOD_LABELS.get(p.method, p.method)} — {rd(p.amount)}" for p in payments),
@@ -96,27 +138,36 @@ def render_day(
     commission_pct: int,
     commission: Decimal,
     tips: Decimal,
+    products_total: Decimal = ZERO,
+    debt_balance: Decimal = ZERO,
 ) -> str:
     """What the specialist made, and the arithmetic laid out so they can check it themselves.
 
     A figure that appears from nowhere is exactly the kind people dispute later, so the
     percentage is shown beside the amount it produced.
+
+    Products are reported and deliberately left out of the commission line — she sold them, and
+    they pay her nothing. What she owes is shown whole and NOT subtracted: the salon lets her
+    settle it whenever she likes, so taking it off today's figure would state a deduction that
+    has not happened.
     """
-    return "\n".join(
-        [
-            f"Hola {specialist_name}, así cerró tu día del {spanish_date(day)}.",
-            "",
-            f"Servicios: {rd(services_total)}",
-            f"Tu comisión ({commission_pct}%): {rd(commission)}",
-            f"Propinas: {rd(tips)}",
-            "",
-            f"Total para ti: {rd(commission + tips)}",
-        ]
-    )
+    rows = [
+        f"Hola {specialist_name}, así cerró tu día del {spanish_date(day)}.",
+        "",
+        f"Servicios: {rd(services_total)}",
+        f"Tu comisión ({commission_pct}%): {rd(commission)}",
+        f"Propinas: {rd(tips)}",
+    ]
+    if products_total > ZERO:
+        rows.append(f"Productos vendidos: {rd(products_total)} (no generan comisión)")
+    rows += ["", f"Total para ti: {rd(commission + tips)}"]
+    if debt_balance > ZERO:
+        rows += ["", f"Lo que debes al salón: {rd(debt_balance)}"]
+    return "\n".join(rows)
 
 
 def _line_rows(lines: Sequence[Line]) -> list[str]:
-    """One row per service. The unit price is shown only when the quantity is more than one —
+    """One row per line. The unit price is shown only when the quantity is more than one —
     otherwise it is the same number twice, and a receipt that repeats itself gets skimmed."""
     rows = []
     for line in lines:

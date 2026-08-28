@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 
 from aziza_adk.receipts import (
+    GENDER_ASSUMED_TEXT,
     Line,
     Payment,
     render_day,
@@ -164,3 +165,108 @@ def test_a_day_with_no_tips_still_says_so():
 )
 def test_a_date_is_written_the_way_the_salon_writes_it(day, written):
     assert spanish_date(day) == written
+
+
+# --- Which client, and only where it could change a figure ----------------------------------
+
+_MANI = Line(
+    name="Manicura + pintura normal",
+    quantity=1,
+    unit_price=Decimal("300.00"),
+    line_total=Decimal("300.00"),
+)
+_AGUA = Line(name="Agua", quantity=1, unit_price=Decimal("25.00"), line_total=Decimal("25.00"))
+
+
+def test_the_ticket_names_the_client_when_asked_to():
+    out = render_ticket("Laura", [_MANI], Decimal("300.00"), gender_label="femenino")
+    assert "Precio: femenino" in out
+
+
+def test_a_matched_name_gets_no_notice():
+    """It is not an assumption, so saying so would train her to skim past the ones that are."""
+    out = render_ticket("Laura", [_MANI], Decimal("300.00"), gender_label="femenino")
+    assert GENDER_ASSUMED_TEXT not in out
+
+
+def test_a_defaulted_name_is_told_about():
+    out = render_ticket("Ariel", [_MANI], Decimal("300.00"), gender_label="femenino", assumed=True)
+    assert GENDER_ASSUMED_TEXT in out
+
+
+def test_nothing_is_said_where_no_figure_could_change():
+    """No label passed means no service on the ticket is priced per client."""
+    out = render_ticket("Ariel", [_MANI], Decimal("300.00"), assumed=True)
+    assert "Precio:" not in out
+    assert GENDER_ASSUMED_TEXT not in out
+
+
+# --- Products, and what she owes ------------------------------------------------------------
+
+
+def test_a_product_is_listed_apart_and_counted_in_the_total():
+    out = render_ticket(
+        "Laura",
+        [_MANI],
+        Decimal("300.00"),
+        product_lines=[_AGUA],
+        products_total=Decimal("25.00"),
+    )
+    assert "Productos:" in out
+    assert "Total: RD$325.00" in out
+
+
+def test_a_receipt_carries_the_products_too():
+    out = render_receipt(
+        "Laura",
+        [_MANI],
+        Decimal("300.00"),
+        [Payment(method="cash", amount=Decimal("325.00"))],
+        product_lines=[_AGUA],
+        products_total=Decimal("25.00"),
+    )
+    assert "Productos:" in out and "Total: RD$325.00" in out
+
+
+def test_the_day_reports_products_without_commissioning_them():
+    out = render_day(
+        "Yamilé",
+        dt.date(2026, 8, 28),
+        services_total=Decimal("300.00"),
+        commission_pct=40,
+        commission=Decimal("120.00"),
+        tips=Decimal("200.00"),
+        products_total=Decimal("25.00"),
+    )
+    assert "Productos vendidos: RD$25.00 (no generan comisión)" in out
+    assert "Tu comisión (40%): RD$120.00" in out
+    assert "Total para ti: RD$320.00" in out  # commission + tips, and nothing from the product
+
+
+def test_what_she_owes_is_shown_and_not_subtracted():
+    """The salon lets her settle whenever; taking it off today would state a deduction nobody
+    has made."""
+    out = render_day(
+        "Yamilé",
+        dt.date(2026, 8, 28),
+        services_total=Decimal("300.00"),
+        commission_pct=40,
+        commission=Decimal("120.00"),
+        tips=Decimal("0.00"),
+        debt_balance=Decimal("15.00"),
+    )
+    assert "Lo que debes al salón: RD$15.00" in out
+    assert "Total para ti: RD$120.00" in out
+
+
+def test_a_clean_slate_says_nothing_about_debt():
+    out = render_day(
+        "Yamilé",
+        dt.date(2026, 8, 28),
+        services_total=Decimal("300.00"),
+        commission_pct=40,
+        commission=Decimal("120.00"),
+        tips=Decimal("0.00"),
+    )
+    assert "debes" not in out
+    assert "Productos" not in out

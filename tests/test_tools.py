@@ -8,11 +8,12 @@ from decimal import Decimal
 
 import pytest
 
-from aziza_adk import queries, session, tools
+from aziza_adk import queries, receipts, session, tools
 from tests.conftest import service_named
 
-MANI = service_named("Manicure clásico")  # nails, RD$800.00
-LEGS = service_named("Depilación de piernas")  # wax,   RD$1,500.00
+MANI = service_named("Manicura + pintura normal")  # nails, RD$300 F / RD$400 M
+PEDI = service_named("Pedicura + pintura normal")  # nails, RD$400 F / RD$500 M
+LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
 
 
 # --- [1] An unregistered sender can do nothing, with no database behind it -----------------
@@ -21,11 +22,15 @@ LEGS = service_named("Depilación de piernas")  # wax,   RD$1,500.00
 @pytest.mark.parametrize(
     "call",
     [
-        lambda c: tools.start_ticket("Laura", c),
-        lambda c: tools.add_service("manicure", 1, c),
+        lambda c: tools.start_ticket("Laura", tool_context=c),
+        lambda c: tools.add_service("manicura normal", 1, c),
         lambda c: tools.show_ticket(c),
         lambda c: tools.void_ticket(c),
-        lambda c: tools.record_payment("efectivo", "800", "0", c),
+        lambda c: tools.record_payment("efectivo", "300", "0", c),
+        lambda c: tools.set_client_gender("hombre", c),
+        lambda c: tools.sell_product("agua", 1, c),
+        lambda c: tools.buy_product("agua", 1, c),
+        lambda c: tools.settle_debt("25", c),
         lambda c: tools.my_day(c),
     ],
 )
@@ -40,13 +45,13 @@ def test_every_tool_refuses_a_session_with_no_specialist(ctx, call):
 
 def test_a_ticket_needs_a_client_name(ctx):
     who = {"id": 1, "full_name": "X", "disciplines": ["nails"]}
-    assert tools.start_ticket("   ", ctx(who))["error"] == "no_client_name"
+    assert tools.start_ticket("   ", tool_context=ctx(who))["error"] == "no_client_name"
 
 
 @pytest.mark.parametrize("quantity", [0, -1, 21, 1.5, "dos", None])
 def test_a_quantity_outside_the_range_is_refused(ctx, quantity):
     who = {"id": 1, "full_name": "X", "disciplines": ["nails"]}
-    assert tools.add_service("manicure", quantity, ctx(who))["error"] == "bad_quantity"
+    assert tools.add_service("manicura normal", quantity, ctx(who))["error"] == "bad_quantity"
 
 
 @pytest.mark.parametrize("method", ["cheque", "", "bitcoin", None])
@@ -85,9 +90,9 @@ def test_every_way_of_saying_a_method_reaches_the_same_column_value(spoken, cano
 
 def test_a_ticket_opens_and_shows_the_catalog_price(working):
     context, _ = working
-    assert tools.start_ticket("Laura", context)["opened"] is True
-    answer = tools.add_service("manicure", 1, context)
-    assert answer["total"] == "RD$800.00"
+    assert tools.start_ticket("Laura", tool_context=context)["opened"] is True
+    answer = tools.add_service("manicura normal", 1, context)
+    assert answer["total"] == "RD$300.00"
     assert "Cuenta de Laura" in answer["ticket"]
 
 
@@ -95,29 +100,29 @@ def test_the_price_is_the_salons_and_not_one_the_model_supplied(working, conn):
     """THE property this design rests on. There is no price argument, and the row that lands
     carries the catalog's figure."""
     context, who = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure clásico", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura + pintura normal", 1, context)
     sale = queries.open_sale(conn, who["id"])
     lines = queries.sale_lines(conn, sale["id"])
-    assert lines[0].unit_price == Decimal(MANI["price"])
+    assert lines[0].unit_price == Decimal(MANI["price_female"])
 
 
 def test_a_quantity_multiplies_the_catalog_price(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    assert tools.add_service("manicure", 3, context)["total"] == "RD$2,400.00"
+    tools.start_ticket("Laura", tool_context=context)
+    assert tools.add_service("manicura normal", 3, context)["total"] == "RD$900.00"
 
 
 def test_two_services_add_up(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    assert tools.add_service("pedicure", 1, context)["total"] == "RD$2,000.00"
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    assert tools.add_service("pedicura normal", 1, context)["total"] == "RD$700.00"
 
 
 def test_a_service_the_salon_does_not_sell_is_refused_and_the_catalog_named(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
+    tools.start_ticket("Laura", tool_context=context)
     answer = tools.add_service("corte de pelo", 1, context)
     assert answer["error"] == "unknown_service"
     assert MANI["name"] in answer["options"]
@@ -127,37 +132,37 @@ def test_a_service_outside_the_specialists_area_is_refused(make_specialist, ctx)
     """The wax/nails split is a guard, not a label: a commission booked under the wrong person
     is money."""
     context = ctx(make_specialist("nails"))
-    tools.start_ticket("Laura", context)
-    answer = tools.add_service("depilación de piernas", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    answer = tools.add_service("piernas", 1, context)
     assert answer["error"] == "wrong_discipline"
     assert answer["service"] == LEGS["name"]
 
 
 def test_someone_who_does_both_may_record_both(make_specialist, ctx):
     context = ctx(make_specialist("nails", "wax"))
-    tools.start_ticket("Laura", context)
-    assert "error" not in tools.add_service("manicure", 1, context)
-    assert tools.add_service("piernas", 1, context)["total"] == "RD$2,300.00"
+    tools.start_ticket("Laura", tool_context=context)
+    assert "error" not in tools.add_service("manicura normal", 1, context)
+    assert tools.add_service("piernas", 1, context)["total"] == "RD$1,150.00"
 
 
 def test_a_second_ticket_is_refused_while_one_is_open(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    assert tools.start_ticket("Ana", context)["error"] == "ticket_already_open"
+    tools.start_ticket("Laura", tool_context=context)
+    assert tools.start_ticket("Ana", tool_context=context)["error"] == "ticket_already_open"
 
 
 def test_nothing_can_be_added_without_a_ticket(working):
     context, _ = working
-    assert tools.add_service("manicure", 1, context)["error"] == "no_open_ticket"
+    assert tools.add_service("manicura normal", 1, context)["error"] == "no_open_ticket"
     assert tools.show_ticket(context)["error"] == "no_open_ticket"
-    assert tools.record_payment("efectivo", "800", "0", context)["error"] == "no_open_ticket"
+    assert tools.record_payment("efectivo", "300", "0", context)["error"] == "no_open_ticket"
 
 
 def test_voiding_frees_the_specialist_to_start_again(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
+    tools.start_ticket("Laura", tool_context=context)
     assert tools.void_ticket(context)["voided"] is True
-    assert tools.start_ticket("Ana", context)["opened"] is True
+    assert tools.start_ticket("Ana", tool_context=context)["opened"] is True
 
 
 # --- [4] Charging ---------------------------------------------------------------------------
@@ -166,83 +171,83 @@ def test_voiding_frees_the_specialist_to_start_again(working):
 def test_a_charge_before_the_ticket_was_shown_is_refused(working):
     """The confirm-first gate: a specialist cannot charge a total they were never shown."""
     context, who = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
     context.state.pop(session.QUOTED_KEY, None)  # as if the ticket had never been quoted
-    assert tools.record_payment("efectivo", "800", "0", context)["error"] == "not_quoted"
+    assert tools.record_payment("efectivo", "300", "0", context)["error"] == "not_quoted"
 
 
 def test_quoting_one_ticket_does_not_authorize_charging_the_next(working):
     """Keyed on the ticket rather than a flag — a different client and a different amount."""
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
     tools.void_ticket(context)
-    tools.start_ticket("Ana", context)
-    tools.add_service("pedicure", 1, context)
+    tools.start_ticket("Ana", tool_context=context)
+    tools.add_service("pedicura normal", 1, context)
     context.state[session.QUOTED_KEY] = {"sale_ref": "some-other-ticket"}
-    assert tools.record_payment("efectivo", "1200", "0", context)["error"] == "not_quoted"
+    assert tools.record_payment("efectivo", "400", "0", context)["error"] == "not_quoted"
 
 
 def test_an_empty_ticket_cannot_be_charged(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
+    tools.start_ticket("Laura", tool_context=context)
     tools.show_ticket(context)
     assert tools.record_payment("efectivo", "100", "0", context)["error"] == "empty_ticket"
 
 
 def test_paying_the_whole_total_closes_the_sale_and_returns_the_receipt(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    answer = tools.record_payment("efectivo", "800", "0", context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    answer = tools.record_payment("efectivo", "300", "0", context)
     assert answer["paid"] is True
-    assert "Cobrado — Laura" in answer["receipt"] and "Total: RD$800.00" in answer["receipt"]
+    assert "Cobrado — Laura" in answer["receipt"] and "Total: RD$300.00" in answer["receipt"]
 
 
 def test_a_split_payment_keeps_the_ticket_open_until_it_adds_up(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    first = tools.record_payment("efectivo", "300", "0", context)
-    assert first["paid"] is False and first["remaining"] == "RD$500.00"
-    second = tools.record_payment("tarjeta", "500", "0", context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    first = tools.record_payment("efectivo", "100", "0", context)
+    assert first["paid"] is False and first["remaining"] == "RD$200.00"
+    second = tools.record_payment("tarjeta", "200", "0", context)
     assert second["paid"] is True
-    assert "Efectivo — RD$300.00" in second["receipt"]
-    assert "Tarjeta — RD$500.00" in second["receipt"]
+    assert "Efectivo — RD$100.00" in second["receipt"]
+    assert "Tarjeta — RD$200.00" in second["receipt"]
 
 
 def test_paying_more_than_is_owed_is_refused_rather_than_absorbed(working):
     """It is either a typo or a tip, and guessing which writes the wrong commission either way."""
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    answer = tools.record_payment("efectivo", "1000", "0", context)
-    assert answer["error"] == "overpayment" and answer["remaining"] == "RD$800.00"
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    answer = tools.record_payment("efectivo", "500", "0", context)
+    assert answer["error"] == "overpayment" and answer["remaining"] == "RD$300.00"
 
 
 def test_a_tip_rides_on_the_payment_and_stays_out_of_the_total(working, conn):
     context, who = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    answer = tools.record_payment("efectivo", "800", "200", context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    answer = tools.record_payment("efectivo", "300", "200", context)
     assert answer["paid"] is True
-    assert "Total: RD$800.00" in answer["receipt"]
+    assert "Total: RD$300.00" in answer["receipt"]
     assert "Propina: RD$200.00" in answer["receipt"]
     sale = queries.fetchone(
         conn,
         "SELECT services_total FROM sales WHERE specialist_id = %(s)s AND status = 'paid'",
         {"s": who["id"]},
     )
-    assert sale["services_total"] == Decimal("800.00")
+    assert sale["services_total"] == Decimal("300.00")
 
 
 def test_a_closed_sale_frees_the_specialist_for_the_next_client(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    tools.record_payment("efectivo", "800", "0", context)
-    assert tools.start_ticket("Ana", context)["opened"] is True
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    tools.record_payment("efectivo", "300", "0", context)
+    assert tools.start_ticket("Ana", tool_context=context)["opened"] is True
 
 
 # --- [5] The day ----------------------------------------------------------------------------
@@ -250,19 +255,152 @@ def test_a_closed_sale_frees_the_specialist_for_the_next_client(working):
 
 def test_the_day_counts_only_what_was_actually_paid(working):
     context, _ = working
-    tools.start_ticket("Laura", context)
-    tools.add_service("manicure", 1, context)
-    tools.record_payment("efectivo", "800", "200", context)
-    tools.start_ticket("Ana", context)  # opened and left open
-    tools.add_service("pedicure", 1, context)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    tools.record_payment("efectivo", "300", "200", context)
+    tools.start_ticket("Ana", tool_context=context)  # opened and left open
+    tools.add_service("pedicura normal", 1, context)
 
     summary = tools.my_day(context)["summary"]
-    assert "Servicios: RD$800.00" in summary
-    assert "Tu comisión (40%): RD$320.00" in summary
+    assert "Servicios: RD$300.00" in summary
+    assert "Tu comisión (40%): RD$120.00" in summary
     assert "Propinas: RD$200.00" in summary
-    assert "Total para ti: RD$520.00" in summary
+    assert "Total para ti: RD$320.00" in summary
 
 
 def test_a_specialist_with_no_sales_today_sees_zeroes(working):
     summary = tools.my_day(working[0])["summary"]
     assert "Servicios: RD$0.00" in summary and "Total para ti: RD$0.00" in summary
+
+
+# --- [6] Which client the ticket is priced for ----------------------------------------------
+
+
+def test_a_recognized_name_is_priced_without_a_notice(working):
+    context, _ = working
+    assert tools.start_ticket("Laura", tool_context=context)["priced_for"] == "femenino"
+    answer = tools.add_service("manicura normal", 1, context)
+    assert answer["total"] == "RD$300.00"
+    assert "Precio: femenino" in answer["ticket"]
+    assert receipts.GENDER_ASSUMED_TEXT not in answer["ticket"]
+
+
+def test_an_unrecognized_name_is_priced_female_and_the_ticket_says_so(working):
+    """The tables cannot be exhaustive, so the one thing that must not happen is silence."""
+    context, _ = working
+    tools.start_ticket("Ariel", tool_context=context)
+    answer = tools.add_service("manicura normal", 1, context)
+    assert answer["total"] == "RD$300.00"
+    assert receipts.GENDER_ASSUMED_TEXT in answer["ticket"]
+
+
+def test_nothing_is_said_where_the_client_cannot_change_a_figure(working):
+    """The acrylic block is one price for everyone. Naming the client there is noise."""
+    context, _ = working
+    tools.start_ticket("Ariel", tool_context=context)
+    answer = tools.add_service("acrilico vip", 1, context)
+    assert "Precio:" not in answer["ticket"]
+    assert receipts.GENDER_ASSUMED_TEXT not in answer["ticket"]
+
+
+def test_the_specialist_saying_so_beats_the_name(working):
+    context, _ = working
+    tools.start_ticket("Laura", "hombre", tool_context=context)
+    assert tools.add_service("manicura normal", 1, context)["total"] == "RD$400.00"
+
+
+def test_correcting_the_client_reprices_the_whole_ticket(working):
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    answer = tools.set_client_gender("hombre", context)
+    assert answer["total"] == "RD$400.00"
+    assert "Precio: masculino" in answer["ticket"]
+
+
+def test_a_service_the_salon_does_not_do_for_that_client_is_refused(make_specialist, ctx):
+    """None is not a zero and not the other column — RD$0.00 would be worse than a refusal."""
+    context = ctx(make_specialist("wax"))
+    tools.start_ticket("Luis", tool_context=context)
+    answer = tools.add_service("brasilero completo", 1, context)
+    assert answer["error"] == "not_offered_to_client"
+    assert answer["service"] == "Brasilero completo"
+
+
+def test_correcting_the_client_is_refused_when_a_line_stands_in_the_way(make_specialist, ctx):
+    """Dropping the line silently would rewrite a ticket she has already read."""
+    context = ctx(make_specialist("wax"))
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("brasilero completo", 1, context)
+    answer = tools.set_client_gender("hombre", context)
+    assert answer["error"] == "not_offered_to_client"
+    assert "Brasilero completo" in answer["services"]
+
+
+def test_a_total_that_changed_since_it_was_shown_cannot_be_charged(working, conn):
+    """THE gate, and why it is keyed on the total rather than the ticket alone: re-pricing moves
+    the figure, and the one she was shown must stop authorizing the one she was not."""
+    context, who = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    tools.set_client_gender("hombre", context)
+
+    sale = queries.open_sale(conn, who["id"])
+    # as if she had been shown RD$300.00 and the ticket had moved behind her
+    context.state[session.QUOTED_KEY] = {"sale_ref": sale["sale_ref"], "total": "300.00"}
+    assert tools.record_payment("efectivo", "400", "0", context)["error"] == "not_quoted"
+
+
+# --- [7] Products, and what a specialist owes -----------------------------------------------
+
+
+def test_a_product_is_charged_to_the_client_but_pays_no_commission(working):
+    """THE property behind two totals and two line tables: commission is taken on work."""
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, context)
+    answer = tools.sell_product("agua", 1, context)
+    assert answer["total"] == "RD$325.00"
+    assert "Productos:" in answer["ticket"]
+
+    tools.record_payment("efectivo", "325", "0", context)
+    summary = tools.my_day(context)["summary"]
+    assert "Servicios: RD$300.00" in summary
+    assert "Tu comisión (40%): RD$120.00" in summary
+    assert "Productos vendidos: RD$25.00" in summary
+
+
+def test_a_ticket_can_hold_nothing_but_products(working):
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    assert tools.sell_product("coca", 2, context)["total"] == "RD$100.00"
+    assert tools.record_payment("efectivo", "100", "0", context)["paid"] is True
+
+
+def test_a_specialist_buying_for_herself_owes_rather_than_sells(working, conn):
+    context, who = working
+    answer = tools.buy_product("agua", 2, context)
+    assert answer["charged"] == "RD$30.00"  # her price, not the client's RD$25.00
+    assert answer["balance"] == "RD$30.00"
+    assert queries.open_sale(conn, who["id"]) is None  # no ticket was touched
+
+
+def test_part_of_a_debt_can_be_paid_and_the_rest_carried(working):
+    """A settled flag per purchase could not express this, which is why it is a ledger."""
+    context, _ = working
+    tools.buy_product("presidente", 1, context)  # RD$125.00 at her price
+    assert tools.settle_debt("50", context)["balance"] == "RD$75.00"
+    assert tools.settle_debt("75", context)["balance"] == "RD$0.00"
+    assert tools.settle_debt("10", context)["error"] == "nothing_owed"
+
+
+def test_paying_more_than_is_owed_is_refused(working):
+    context, _ = working
+    tools.buy_product("agua", 1, context)
+    assert tools.settle_debt("100", context)["error"] == "more_than_owed"
+
+
+def test_what_she_owes_shows_on_her_day(working):
+    context, _ = working
+    tools.buy_product("agua", 1, context)
+    assert "Lo que debes al salón: RD$15.00" in tools.my_day(context)["summary"]

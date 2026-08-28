@@ -29,13 +29,13 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dbbuild
-          # The APP image, not a postgres one: the bootstrap is Python, not SQL. seed_mock.py calls
-          # queries.apply_schema itself, so there is no psql to need and no out-of-band ConfigMap
-          # to carry the SQL.
+          # The APP image, not a postgres one: the bootstrap is Python, not SQL.
+          # seed_catalog.py calls queries.apply_schema itself, so there is no psql to need and
+          # no out-of-band ConfigMap to carry the SQL.
           #
-          # It also loads the FICTITIOUS salon (aziza_adk/demo_data.py) — this is the only
-          # bootstrap there is, and the salon's real catalog and its specialists' real Telegram ids
-          # are still unanswered. deploy/helm/README.md § Building the database.
+          # It loads the salon's REAL catalog and, alongside it, three INVENTED specialists
+          # (aziza_adk/demo_data.py) — nobody real can drive the assistant until the salon's own
+          # are registered. deploy/helm/README.md § Building the database.
           image: {{ include "aziza.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
@@ -51,7 +51,7 @@ spec:
                   key: DATABASE_URL
             - name: TIMEZONE
               value: {{ .Values.config.TIMEZONE | quote }}
-          command: ["python", "scripts/seed_mock.py"]
+          command: ["python", "scripts/seed_catalog.py"]
           volumeMounts:
             - name: tmp
               mountPath: /tmp

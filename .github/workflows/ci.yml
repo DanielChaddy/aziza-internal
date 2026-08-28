@@ -69,7 +69,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       # Idempotent, and re-runnable. README § Run it.
-      - run: python scripts/seed_mock.py
+      - run: python scripts/seed_catalog.py
 
       # pytest exits 5 on an empty collection, so a suite that silently stops being discovered
       # fails this job rather than reporting green.

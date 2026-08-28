@@ -21,7 +21,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from aziza_adk import config, demo_data, queries  # noqa: E402
+from aziza_adk import catalog_data, config, queries  # noqa: E402
 
 #: Test specialists live under this Telegram id prefix, so teardown can find and delete them.
 #: Well outside the demo dataset's range, so the two can never collide.
@@ -158,9 +158,17 @@ def working(ctx, make_specialist):
 
 
 def service_named(name: str) -> dict:
-    """One row of the demo catalog, read off the dataset rather than typed here — so a change to
-    the prices cannot leave a test asserting an amount the salon no longer charges."""
-    for row in demo_data.SERVICES:
+    """One row of the salon's catalog, read off the dataset rather than typed here — so a change
+    to the prices cannot leave a test asserting an amount the salon no longer charges."""
+    for row in catalog_data.SERVICES:
         if row["name"] == name:
             return row
-    raise AssertionError(f"{name!r} is not in demo_data.SERVICES")
+    raise AssertionError(f"{name!r} is not in catalog_data.SERVICES")
+
+
+def product_named(name: str) -> dict:
+    """One row of the salon's product list, for the same reason."""
+    for row in catalog_data.PRODUCTS:
+        if row["name"] == name:
+            return row
+    raise AssertionError(f"{name!r} is not in catalog_data.PRODUCTS")

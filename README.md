@@ -12,11 +12,16 @@ Architecture at a glance:
 - **One agent** (`aziza_adk/agents/sales.py`): there is nothing to route between, and it is still
   built through the platform's graph factory so the input screen is attached rather than
   remembered.
-- **Six tools and two layers of guard** (`aziza_adk/tools.py`, `guards.py`): identity resolved at
+- **Ten tools and two layers of guard** (`aziza_adk/tools.py`, `guards.py`): identity resolved at
   the edge before the Runner, a deterministic discipline check, and a confirm-first gate that
   refuses to charge a total the specialist has not been shown.
 - **A price that is never a model output** (`aziza_adk/catalog.py`): what she said is resolved
-  against the salon's catalog, and the price is read off the row.
+  against the salon's catalog, and the price is read off the row. Which of the row's two prices
+  is decided by a table of names (`names.py`), never by the model — and the ticket says when it
+  had to guess.
+- **Products, which pay no commission** (`db/schema.sql`): a product line lives in its own table,
+  so the figure a specialist is paid on cannot accidentally include one. What she takes for
+  herself is a debit against her instead, carried on a ledger until she settles it.
 
 ---
 
@@ -43,7 +48,7 @@ across both repositories at once, overlay the editable copies afterwards:
 
 ```bash
 docker compose up -d --wait db                # Postgres 16 on :5434, two databases
-./.venv/bin/python scripts/seed_mock.py       # idempotent
+./.venv/bin/python scripts/seed_catalog.py    # idempotent
 adk web                                       # pick `aziza_adk`, http://localhost:8000
 ```
 
@@ -74,15 +79,20 @@ service that is not configured yet.
 ### The demo script
 
 1. **Refused cold.** Message the bot from an unregistered id → one line, no session, no model call.
-2. **A sale.** As a seeded specialist: *"Le hice manicure y pedicure a Laura"* → the ticket comes
-   back with each service at the salon's price and a total.
-3. **A price that does not exist.** *"Y un corte de pelo"* → refused, with what the salon does
-   sell.
-4. **The wrong area.** As a nails specialist: *"y depilación de piernas"* → refused.
-5. **A split payment.** *"Pagó 800 en efectivo"* → the balance. *"Y el resto con tarjeta, más 200
+2. **A sale.** As a seeded specialist: *"Le hice manicura normal a Laura"* → the ticket at the
+   salon's own price, RD$300.00, with no notice: Laura is a name the table knows.
+3. **A word that names three prices.** *"Y una manicura"* → asked which, because three services
+   begin with it at three prices and picking the cheapest would be a wrong receipt.
+4. **A price that does not exist.** *"Y un corte de pelo"* → refused, with what the salon sells.
+5. **The wrong area.** As a nails specialist: *"y piernas completas"* → refused.
+6. **A client the table does not know.** *"Le hice piernas completas a Ariel"* → priced female at
+   RD$850.00 **and said so**. *"Es hombre"* → re-priced to RD$1,400.00.
+7. **A product.** *"Se llevó una Coca-Cola"* → RD$50.00 on the ticket, and no commission on it.
+8. **A split payment.** *"Pagó 200 en efectivo"* → the balance. *"Y el resto con tarjeta, más 100
    de propina"* → the receipt, and the ticket closes.
-6. **A voice note.** Say the same thing out loud — it takes the same path a typed message does.
-7. **The day.** *"¿Cómo voy hoy?"* → services, commission, tips and the total.
+9. **A voice note.** Say the same thing out loud — it takes the same path a typed message does.
+10. **Her own tab.** *"Me tomé un agua"* → RD$15.00 charged to her, not to a client.
+11. **The day.** *"¿Cómo voy hoy?"* → services, commission, tips, products sold, and what she owes.
 
 ## Testing
 

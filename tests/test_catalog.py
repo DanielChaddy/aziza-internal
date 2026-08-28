@@ -8,12 +8,39 @@ from decimal import Decimal
 
 import pytest
 
-from aziza_adk.catalog import Service, names, resolve
+from aziza_adk import catalog_data
+from aziza_adk.catalog import MALE, Product, Service, names, price_for, resolve
 
-MANI = Service("svc-1", "Manicure clásico", "nails", Decimal("800.00"), ("manicure", "mani"))
-GEL = Service("svc-2", "Manicure en gel", "nails", Decimal("1400.00"), ("gel",))
-LEGS = Service("svc-3", "Depilación de piernas", "wax", Decimal("1500.00"), ("piernas",))
+#: A SYNTHETIC catalog, small enough that each rule can be seen firing on its own. The salon's
+#: real one is exercised at the bottom of this file, where the names overlap far more.
+MANI = Service(
+    "svc-1",
+    "Manicure clásico",
+    "nails",
+    Decimal("800.00"),
+    Decimal("900.00"),
+    ("manicure", "mani"),
+)
+GEL = Service("svc-2", "Manicure en gel", "nails", Decimal("1400.00"), Decimal("1500.00"), ("gel",))
+LEGS = Service(
+    "svc-3", "Depilación de piernas", "wax", Decimal("1500.00"), Decimal("2000.00"), ("piernas",)
+)
 CATALOG = (MANI, GEL, LEGS)
+
+
+def _real_services() -> tuple[Service, ...]:
+    """The salon's own catalog, built from the dataset the seeder reads."""
+    return tuple(
+        Service(
+            service_ref=s["service_ref"],
+            name=s["name"],
+            discipline=s["discipline"],
+            price_female=None if s["price_female"] is None else Decimal(s["price_female"]),
+            price_male=None if s["price_male"] is None else Decimal(s["price_male"]),
+            aliases=tuple(a for a in s["aliases"].split("|") if a),
+        )
+        for s in catalog_data.SERVICES
+    )
 
 
 # --- [1] What resolves --------------------------------------------------------------------
@@ -69,8 +96,8 @@ def test_a_phrase_naming_two_services_returns_both_and_picks_neither():
     """Picking the first of two services with different prices is a wrong receipt, which is worse
     than one more question."""
     catalog = (
-        Service("a", "Manicure clásico", "nails", Decimal("800.00")),
-        Service("b", "Manicure en gel", "nails", Decimal("1400.00")),
+        Service("a", "Manicure clásico", "nails", Decimal("800.00"), Decimal("900.00")),
+        Service("b", "Manicure en gel", "nails", Decimal("1400.00"), Decimal("1500.00")),
     )
     found = resolve("manicure", catalog)
     assert found.match is None
@@ -86,7 +113,7 @@ def test_an_exact_alias_beats_an_ambiguous_overlap():
 
 
 def test_the_resolved_row_carries_the_salons_price():
-    assert resolve("gel", CATALOG).match.price == Decimal("1400.00")
+    assert resolve("gel", CATALOG).match.price_female == Decimal("1400.00")
 
 
 def test_the_resolved_row_carries_the_discipline_the_guard_reads():
@@ -100,3 +127,90 @@ def test_what_exists_is_the_catalogs_own_names():
 @pytest.mark.parametrize("said", ["corte", "botox", "masaje", "uñas de porcelana"])
 def test_nothing_outside_the_catalog_is_ever_invented(said):
     assert resolve(said, CATALOG).match is None
+
+
+# --- [4] The salon's own catalog, where the names really do overlap -------------------------
+
+
+def test_a_word_that_names_three_prices_comes_back_ambiguous():
+    """ "manicura" begins three services at three prices. Resolving it to the cheapest would be a
+    wrong receipt, which is the one outcome worse than another question."""
+    found = resolve("manicura", _real_services())
+    assert found.match is None
+    assert len(found.candidates) == 3
+
+
+def test_every_retoque_is_offered_rather_than_one_being_picked():
+    """The salon's list writes "Retoque" eight times, each meaning the row above it."""
+    found = resolve("retoque", _real_services())
+    assert found.match is None
+    assert len(found.candidates) == 8
+
+
+def test_naming_the_parent_narrows_the_retoque():
+    assert (
+        resolve("retoque de acrilico vip", _real_services()).match.name == "Retoque de Acrílico VIP"
+    )
+
+
+def test_a_longer_name_does_not_swallow_a_shorter_one():
+    """ "piernas" must not come back ambiguous against "Media pierna", and "pecho" must resolve
+    even though "Pecho y Abdomen" exists."""
+    real = _real_services()
+    assert resolve("piernas", real).match.name == "Piernas completas"
+    assert resolve("pecho", real).match.name == "Pecho"
+
+
+def test_nothing_outside_the_real_catalog_resolves():
+    assert resolve("corte de pelo", _real_services()).match is None
+
+
+@pytest.mark.parametrize(
+    "service_name,gender",
+    [("Brasilero completo", MALE), ("Barba", "female"), ("Espalda Completa", "female")],
+)
+def test_a_service_the_salon_does_not_offer_that_client_has_no_price(service_name, gender):
+    """None, and NOT the other column: reading across would charge a price the salon never set."""
+    row = next(s for s in _real_services() if s.name == service_name)
+    assert price_for(row, gender) is None
+
+
+def test_the_two_columns_differ_where_the_salon_says_they_do():
+    row = next(s for s in _real_services() if s.name == "Piernas completas")
+    assert price_for(row, "female") == Decimal("850.00")
+    assert price_for(row, MALE) == Decimal("1400.00")
+
+
+def test_an_unrecognized_client_is_refused_rather_than_priced_female():
+    with pytest.raises(ValueError):
+        price_for(MANI, "señora")
+
+
+# --- [5] One resolver, two kinds of row -----------------------------------------------------
+
+
+def _real_products() -> tuple[Product, ...]:
+    return tuple(
+        Product(
+            product_ref=p["product_ref"],
+            name=p["name"],
+            price_client=Decimal(p["price_client"]),
+            price_specialist=Decimal(p["price_specialist"]),
+            aliases=tuple(a for a in p["aliases"].split("|") if a),
+        )
+        for p in catalog_data.PRODUCTS
+    )
+
+
+def test_the_same_resolver_serves_products():
+    """Products reuse the service resolver rather than a second copy of it, so ambiguity and
+    aliasing behave identically for both."""
+    assert resolve("coca", _real_products()).match.name == "Coca-Cola"
+    assert resolve("agua", _real_products()).match.price_client == Decimal("25.00")
+
+
+def test_a_bare_name_the_salon_lists_twice_resolves_to_the_plain_row():
+    """Ritz appears twice at the same price, once from a different supplier. Asking which would
+    be a question whose answer cannot change the total."""
+    assert resolve("ritz", _real_products()).match.name == "Ritz"
+    assert resolve("ritz sarah", _real_products()).match.name == "Ritz (Surtidora Sarah)"
