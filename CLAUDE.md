@@ -1,8 +1,9 @@
 # CLAUDE.md
 
-Guidance for working in this repository. The shared rules — tiers, documents, the board, naming,
-comments — are `agent-platform/CLAUDE.md` and are not repeated here. This file holds what is true
-of **this** repository only.
+Guidance for working in this repository. The shared rules — tiers, documents, naming, comments —
+are `agent-platform/CLAUDE.md` and are not repeated here. This file holds what is true of **this**
+repository only. The board those rules name does not track this repository: open items are its own
+GitHub issues.
 
 ## What this is
 
@@ -25,7 +26,7 @@ A specialist-facing constant is named `*_MSG` or `*_TEXT`. That convention is no
 ## Commands
 
 ```bash
-make check                            # lint + the deterministic gate. What the pipeline runs.
+make check                            # lint + the deterministic gate. The whole of it.
 make lint                             # ruff check AND ruff format --check — both halves
 make format
 make test

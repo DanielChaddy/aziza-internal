@@ -68,5 +68,5 @@ MODEL_TURN_TIMEOUT_SECONDS: int = _int("MODEL_TURN_TIMEOUT_SECONDS", 60)
 SUMMARY_SEND_MODE: str = os.getenv("SUMMARY_SEND_MODE", "simulate").strip().lower()
 
 # --- Gates ------------------------------------------------------------------
-# 1 turns an absent database from skips into failures. What the pipeline sets.
+# 1 turns an absent database from skips into failures.
 REQUIRE_DB: bool = _flag("REQUIRE_DB", False)

@@ -90,7 +90,7 @@ Two layers.
 
 ```bash
 make check                 # the GATE — lint + the deterministic suite. Must be green.
-REQUIRE_DB=1 make test     # what the pipeline runs: an absent database is a failure
+REQUIRE_DB=1 make test     # an absent database is a failure rather than a skip
 ```
 
 - **`pytest` is the regression gate**, and it reaches no model and no network. Three quarters of
@@ -113,8 +113,7 @@ idempotent by construction — the claim row is taken before the send and commit
 succeeded — and **a simulated run records nothing**, so a dry run cannot mark a day as already
 reported.
 
-Running it on a schedule is a `CronJob` in a chart that does not exist yet; it is on the board
-with the rest of the deploy.
+Running it on a schedule needs a scheduler and a chart, and neither exists yet.
 
 ## The shared packages
 
@@ -140,4 +139,5 @@ implemented in `aziza_adk/config.py` and in the channel package's own `settings.
 
 ## What is open
 
-On the board — `dev.azure.com/mdtx/Assistants`, tagged `aziza`. Nothing here keeps a second copy.
+This repository's GitHub issues. Nothing here keeps a second copy, and the board the sibling
+assistants use does not track this repository.

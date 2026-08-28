@@ -1,4 +1,4 @@
 # The gate toolbox, separate from requirements.txt because the Dockerfile installs that one
-# into the production image. Pinned exactly: `ruff format --check` blocks the pipeline, so a
-# release that formats one line differently would turn the build red with nothing in the diff.
+# into the production image. Pinned exactly: `ruff format --check` is a gate, so a release that
+# formats one line differently would fail it with nothing in the diff.
 ruff==0.16.4

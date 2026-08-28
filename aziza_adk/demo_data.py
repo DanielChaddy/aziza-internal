@@ -4,7 +4,7 @@ Stdlib only, and read by BOTH the seeder and the tests — so a change to the da
 the tests asserting against people who no longer work here.
 
 The people and the Telegram ids are invented. The service names and the prices are placeholders
-until the salon gives us its own; that is an Impediment on the board, not a decision taken here.
+until the salon gives us its own, which is still unanswered rather than decided here.
 """
 
 from __future__ import annotations

@@ -13,5 +13,5 @@ select = ["E", "F", "I"]
 known-first-party = ["aziza_adk", "conftest", "eval", "scripts", "voice_checks"]
 
 [tool.pytest.ini_options]
-# Explicit so a bare `pytest` collects the same set here and in the pipeline.
+# Explicit so a bare `pytest` collects the same set as `make test`.
 testpaths = ["tests"]

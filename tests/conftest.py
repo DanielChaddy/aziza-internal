@@ -6,8 +6,8 @@ commission be held at all.
 
 What does need one is self-cleaning: test specialists carry a sentinel Telegram id prefix and are
 deleted in both setup and teardown, cascading their sales away, so the suite is re-runnable and
-order-independent. `REQUIRE_DB=1` turns an absent database from skips into failures, which is
-what the pipeline sets so a partial run cannot report as a green one.
+order-independent. `REQUIRE_DB=1` turns an absent database from skips into failures, so a partial
+run cannot report as a green one.
 """
 
 from __future__ import annotations

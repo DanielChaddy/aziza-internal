@@ -129,4 +129,5 @@ The eval is the second layer, over the wording and the shape of a turn, and is n
 
 ## §11 · What is open
 
-On the board — `dev.azure.com/mdtx/Assistants`, tagged `aziza`. Nothing here keeps a second copy.
+This repository's GitHub issues. Nothing here keeps a second copy, and the board the sibling
+assistants use does not track this repository.

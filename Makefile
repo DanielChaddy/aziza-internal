@@ -1,8 +1,7 @@
-# The gates, and the same commands the pipeline runs.
+# The gates. Nothing outside this checkout runs them, so a skipped run is a silent one.
 #
-# `lint` runs both halves because Infra's scripts/python-quality.sh does. A `make lint` that
-# checked only the first would be green here and red in CI, which is the one thing a local
-# gate must never be.
+# `lint` runs both halves: one that checked only `ruff check` would pass a tree that
+# `ruff format --check` fails.
 .PHONY: check lint format test
 
 check: lint test
@@ -15,6 +14,6 @@ format:
 	./.venv/bin/ruff format .
 
 # The suite runs against the seeded database. REQUIRE_DB=1 turns an absent one from skips into
-# failures, which is what the pipeline sets (README § Testing).
+# failures (README § Testing).
 test:
 	./.venv/bin/python -m pytest
