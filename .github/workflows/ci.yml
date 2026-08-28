@@ -74,3 +74,48 @@ jobs:
       # pytest exits 5 on an empty collection, so a suite that silently stops being discovered
       # fails this job rather than reporting green.
       - run: python -m pytest
+
+  image:
+    name: Image
+    needs: [quality, test]
+    # A dispatched run on a branch would otherwise publish a tag that traces to no released
+    # commit.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN, so publishing needs no credential of its own.
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag is the short commit SHA and nothing else. It has to be derivable from a git ref by
+      # anyone holding the repository, or a rollback names an image nobody can rebuild — which is
+      # also why no `latest` is published.
+      #
+      # ADO_PAT reaches pip as a BuildKit secret, read out of /run/secrets while pip runs and
+      # never written into a layer (Dockerfile).
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/danielchaddy/aziza-internal:${{ steps.sha.outputs.short }}
+          # Links the GHCR package to this repository, which is what makes the package inherit
+          # its visibility rather than defaulting to public.
+          labels: org.opencontainers.image.source=https://github.com/DanielChaddy/aziza-internal
+          secrets: |
+            ADO_PAT=${{ secrets.ADO_PAT }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
