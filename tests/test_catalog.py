@@ -209,8 +209,15 @@ def test_the_same_resolver_serves_products():
     assert resolve("agua", _real_products()).match.price_client == Decimal("25.00")
 
 
-def test_a_bare_name_the_salon_lists_twice_resolves_to_the_plain_row():
-    """Ritz appears twice at the same price, once from a different supplier. Asking which would
-    be a question whose answer cannot change the total."""
+def test_no_two_products_share_a_name():
+    """A name the catalog holds twice cannot resolve: `_by_name` returns both and the specialist
+    is asked a question whose answer cannot change the total."""
+    names = [p["name"] for p in catalog_data.PRODUCTS]
+    assert len(names) == len(set(names))
+
+
+def test_a_bare_brand_resolves_to_the_row_that_bears_it():
+    """`resolve` matches the full name before it matches a fragment, so "doritos" is the Doritos
+    row rather than an ambiguity with Doritos Dinamita."""
     assert resolve("ritz", _real_products()).match.name == "Ritz"
-    assert resolve("ritz sarah", _real_products()).match.name == "Ritz (Surtidora Sarah)"
+    assert resolve("doritos", _real_products()).match.name == "Doritos"

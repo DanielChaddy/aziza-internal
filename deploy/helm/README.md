@@ -114,6 +114,11 @@ which this Job does not pass, so a real database carries only people who exist.
 ref it no longer holds, because a Telegram id the database keeps active is a credential — see
 `queries.stand_down_absent`. Deactivated rather than deleted: her sales are the salon's record.
 
+**Removing a row from the catalog retires it**, for the same reason and by the same rule. The
+seed deactivates every product and service whose ref `catalog_data.py` no longer holds — see
+`queries.retire_absent` — so a de-duplication that edits the dataset reaches the database instead
+of leaving the dropped row sellable and still listed in the prompt.
+
 `summary.sendMode` is `live`: the seed registers real people with real Telegram ids, so a
 specialist who billed that day receives her end-of-day message. The administrator does no salon
 work and is owed none.
