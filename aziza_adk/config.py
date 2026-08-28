@@ -27,7 +27,7 @@ from conversation_core import int_ as _int  # noqa: E402
 AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gemini-3.5-flash-lite")
 # What reads a voice note. Its own variable rather than the agent's: reading audio is not
 # reasoning, so downgrading one must never silently change what hears a specialist.
-TRANSCRIBE_MODEL: str = os.getenv("TRANSCRIBE_MODEL", "gemini-3.5-flash")
+TRANSCRIBE_MODEL: str = os.getenv("TRANSCRIBE_MODEL", "gemini-3.5-flash-lite")
 
 # --- Databases --------------------------------------------------------------
 # Business DB uses a SYNC driver (psycopg 3); ADK's session DB uses an ASYNC one and lives in
