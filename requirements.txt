@@ -5,10 +5,15 @@
 # version. The repository is PRIVATE, so an image build authenticates with an Azure DevOps PAT
 # mounted as a BuildKit secret; nothing at runtime reads it.
 #
-# `channel-telegram-v0.1.0` IS NOT PUSHED YET. The package lands and is tagged in agent-platform
-# first, and this pin resolves only from that moment — the pin cannot name a tag that does not
-# exist. Until then, install the editable copy over the top:
-#   pip install -e ../agent-platform/packages/channel-telegram
+# LOCAL DEVELOPMENT: these install non-editable, so a change in agent-platform is NOT picked up
+# until it is tagged and re-installed. To work across both repositories at once, overlay the
+# editable copies afterwards — a developer's choice, deliberately not pinned here:
+#   pip install -e ../agent-platform/packages/channel-telegram   # …and the others as needed
+#
+# `pip`, not `uv pip`: channel-telegram declares conversation-core through a [tool.uv.sources]
+# path, and uv resolves that against the tag it was installed from, which conflicts with this
+# file's own conversation-core pin. pip does not read that table and installs both from the tags
+# named here, which is what CI and the Dockerfile run.
 conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@conversation-core-v0.1.0#subdirectory=packages/conversation-core
 channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@channel-telegram-v0.1.0#subdirectory=packages/channel-telegram
 agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-adk-v0.1.0#subdirectory=packages/agent-adk
