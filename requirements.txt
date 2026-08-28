@@ -14,7 +14,7 @@
 # path, and uv resolves that against the tag it was installed from, which conflicts with this
 # file's own conversation-core pin. pip does not read that table and installs both from the tags
 # named here, which is what CI and the Dockerfile run.
-conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@conversation-core-v0.1.0#subdirectory=packages/conversation-core
+conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@conversation-core-v0.2.1#subdirectory=packages/conversation-core
 channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@channel-telegram-v0.1.0#subdirectory=packages/channel-telegram
 agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-adk-v0.1.0#subdirectory=packages/agent-adk
 agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-telemetry-v0.1.0#subdirectory=packages/agent-telemetry

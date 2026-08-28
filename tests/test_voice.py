@@ -1,8 +1,10 @@
 """The salon's voice, gated.
 
-Two halves, and the second is the one that earns its keep. The first checks that
-`eval/voice_checks.py` can tell a formal sentence from a close one. The second turns it on THIS
-REPOSITORY'S OWN STRINGS — every literal a specialist can read with no model in the path.
+Two halves, and the second is the one that earns its keep. The first checks only what is this
+repository's: which direction it gates, and the nouns and figure shape it supplies. The
+conjugation and the markup are asserted beside `conversation_core`. The second half turns the
+whole thing on THIS REPOSITORY'S OWN STRINGS — every literal a specialist can read with no model
+in the path.
 
 Those strings are DISCOVERED rather than listed: any module-level constant named `*_MSG` or
 `*_TEXT` in `aziza_adk` is collected and checked. That naming convention is the contract — a
@@ -52,54 +54,15 @@ each_string = pytest.mark.parametrize(
 # --- the checks themselves --------------------------------------------------
 
 
-def test_a_formal_sentence_is_caught():
+def test_this_repository_gates_the_formal_direction():
+    """A salon addresses a colleague, so the reasons wanted here are the FORMAL ones. The shared
+    check runs both ways and picking the wrong one would pass every string this repository ships."""
     assert voice_checks.usted_reasons("Por favor confirme su cuenta")
 
 
-def test_the_same_sentence_addressed_to_a_colleague_passes():
-    assert voice_checks.is_tu("Confírmame la cuenta cuando puedas")
-
-
-def test_the_pronoun_alone_is_enough():
-    assert "says 'usted'" in voice_checks.usted_reasons("¿En qué puedo ayudarle a usted?")
-
-
-def test_a_past_tense_is_not_a_formal_imperative():
-    """ "Te envié" and the usted imperative "envíe" differ by one accent, and the first is an
-    ordinary sentence here. A folded check calls it formal and the gate stops being read."""
-    assert voice_checks.is_tu("Te envié el resumen de tu día")
-
-
-def test_the_usted_form_of_the_same_verb_is_still_caught():
-    assert "formal imperative 'envíe'" in voice_checks.usted_reasons("Envíe el resumen")
-
-
-@pytest.mark.parametrize(
-    "correct,formal",
-    [
-        ("Ya lo revisé contigo", "Revise la cuenta"),
-        ("Te lo confirmé ayer", "Confirme el monto"),
-        ("Lo verifiqué en el sistema", "Verifique el total"),
-    ],
-)
-def test_each_accent_ambiguous_verb_is_told_apart(correct, formal):
-    assert voice_checks.is_tu(correct), correct
-    assert voice_checks.usted_reasons(formal), formal
-
-
 def test_the_formal_possessive_over_a_salon_noun_is_caught():
+    """The noun list is this salon's and travels as a parameter, so it is asserted here."""
     assert voice_checks.usted_reasons("Su comisión de hoy es RD$400.00")
-
-
-def test_the_transport_cannot_render_markdown():
-    """The channel sends plain text with no parse mode, so markup arrives literally."""
-    assert voice_checks.markdown_reasons("El total es **RD$100.00**")
-    assert voice_checks.markdown_reasons("# Resumen")
-    assert voice_checks.markdown_reasons("| Servicio | Precio |")
-
-
-def test_plain_text_passes():
-    assert voice_checks.markdown_reasons("El total es RD$100.00") == []
 
 
 def test_an_amount_the_assistant_wrote_itself_is_caught():

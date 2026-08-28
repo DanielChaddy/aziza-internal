@@ -204,5 +204,7 @@ The eval is the second layer, over the wording and the shape of a turn, and is n
 
 ## §11 · What is open
 
-This repository's GitHub issues. Nothing here keeps a second copy, and the board the sibling
-assistants use does not track this repository.
+This repository's GitHub issues, and nothing here keeps a second copy. The one exception is work
+that spans the platform and its consumers: an item ordering a package's tag against this
+repository's pin cannot live where neither the package nor the sibling is, so it sits on the board
+the siblings use.
