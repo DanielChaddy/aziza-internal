@@ -67,7 +67,7 @@ def specialist_by_telegram_id(conn: psycopg.Connection, telegram_user_id: str) -
     return fetchone(
         conn,
         """
-        SELECT s.id, s.specialist_ref, s.full_name,
+        SELECT s.id, s.specialist_ref, s.full_name, s.is_admin,
                COALESCE(ARRAY_AGG(d.code ORDER BY d.code)
                         FILTER (WHERE d.code IS NOT NULL), '{}'::text[]) AS disciplines
         FROM specialists s
@@ -77,6 +77,29 @@ def specialist_by_telegram_id(conn: psycopg.Connection, telegram_user_id: str) -
         GROUP BY s.id
         """,
         {"tg": telegram_user_id},
+    )
+
+
+def working_specialists(conn: psycopg.Connection) -> list[dict]:
+    """Everyone whose work can be recorded, with the disciplines each holds.
+
+    Admins are excluded: an admin does no salon work, so naming one as having done a service is
+    not a thing to resolve to. The list is what an admin's spoken name is matched against, the
+    same way a spoken service is matched against the catalog.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT s.id, s.specialist_ref, s.full_name,
+               COALESCE(ARRAY_AGG(d.code ORDER BY d.code)
+                        FILTER (WHERE d.code IS NOT NULL), '{}'::text[]) AS disciplines
+        FROM specialists s
+        LEFT JOIN specialist_disciplines sd ON sd.specialist_id = s.id
+        LEFT JOIN disciplines d             ON d.id = sd.discipline_id
+        WHERE s.active AND NOT s.is_admin
+        GROUP BY s.id
+        ORDER BY s.full_name
+        """,
     )
 
 
@@ -157,18 +180,21 @@ def create_sale(
     *,
     client_gender: str,
     gender_source: str,
+    recorded_by: int,
 ) -> dict:
     """Open a ticket. Raises `psycopg.errors.UniqueViolation` when one is already open —
     the index is the guarantee, and the tool's own check is only there to say it kindly."""
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO sales (sale_ref, specialist_id, client_name, client_gender, "
-            "                   gender_source) "
-            "VALUES (gen_random_uuid()::text, %(sid)s, %(name)s, %(gender)s, %(source)s) "
+            "INSERT INTO sales (sale_ref, specialist_id, recorded_by, client_name, "
+            "                   client_gender, gender_source) "
+            "VALUES (gen_random_uuid()::text, %(sid)s, %(by)s, %(name)s, %(gender)s, "
+            "        %(source)s) "
             "RETURNING id, sale_ref, client_name, client_gender, gender_source, "
             "          services_total, products_total",
             {
                 "sid": specialist_id,
+                "by": recorded_by,
                 "name": client_name,
                 "gender": client_gender,
                 "source": gender_source,
@@ -358,6 +384,7 @@ def record_purchase(
     product: Product,
     quantity: int,
     business_date: dt.date,
+    recorded_by: int,
 ) -> Decimal:
     """Debit a specialist for what she took for herself, and answer with the amount.
 
@@ -367,11 +394,13 @@ def record_purchase(
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO specialist_ledger "
-            "  (specialist_id, kind, product_id, description, amount, business_date) "
-            "SELECT %(sid)s, 'purchase', p.id, p.name, %(amount)s, %(day)s "
+            "  (specialist_id, recorded_by, kind, product_id, description, amount, "
+            "   business_date) "
+            "SELECT %(sid)s, %(by)s, 'purchase', p.id, p.name, %(amount)s, %(day)s "
             "FROM products p WHERE p.product_ref = %(ref)s",
             {
                 "sid": specialist_id,
+                "by": recorded_by,
                 "ref": product.product_ref,
                 "amount": amount,
                 "day": business_date,
@@ -387,14 +416,21 @@ def record_settlement(
     amount: Decimal,
     business_date: dt.date,
     description: str,
+    recorded_by: int,
 ) -> None:
     """Credit a payment against what she owes. Partial is ordinary, not an exception."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO specialist_ledger "
-            "  (specialist_id, kind, description, amount, business_date) "
-            "VALUES (%(sid)s, 'payment', %(desc)s, %(amount)s, %(day)s)",
-            {"sid": specialist_id, "desc": description, "amount": amount, "day": business_date},
+            "  (specialist_id, recorded_by, kind, description, amount, business_date) "
+            "VALUES (%(sid)s, %(by)s, 'payment', %(desc)s, %(amount)s, %(day)s)",
+            {
+                "sid": specialist_id,
+                "by": recorded_by,
+                "desc": description,
+                "amount": amount,
+                "day": business_date,
+            },
         )
     conn.commit()
 

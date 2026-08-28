@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS specialists (
     -- sender types — it is this, matched at the edge before the model runs (§3).
     telegram_user_id TEXT NOT NULL UNIQUE,
     full_name        TEXT NOT NULL,
+    -- May record work against ANOTHER specialist. The one authorization the sender's own identity
+    -- does not settle, so it is read from this column and never from anything a model can say
+    -- (§3). An admin does no salon work herself and earns nothing: she names whose work it is on
+    -- every entry, and omitting the name is refused rather than booked to her.
+    is_admin         BOOLEAN NOT NULL DEFAULT FALSE,
     active           BOOLEAN NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -57,7 +62,12 @@ CREATE INDEX IF NOT EXISTS ix_services_discipline ON services (discipline_id);
 CREATE TABLE IF NOT EXISTS sales (
     id             SERIAL PRIMARY KEY,
     sale_ref       TEXT NOT NULL UNIQUE,
+    -- WHOSE WORK IT IS, and therefore who the commission belongs to.
     specialist_id  INTEGER NOT NULL REFERENCES specialists (id),
+    -- WHO TYPED IT. Equal to specialist_id when she recorded her own; an admin otherwise. Always
+    -- set, never NULL: a magic absence would make "she entered it" and "we lost track" the same
+    -- row, and this is the audit trail for money paid to a person (§3).
+    recorded_by    INTEGER NOT NULL REFERENCES specialists (id),
     client_name    TEXT NOT NULL,
     -- WHICH price column every line on this ticket reads (§5). Set when the ticket opens and
     -- re-priced if it changes, so a line can never disagree with the ticket it belongs to.
@@ -86,6 +96,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_one_open_per_specialist
     ON sales (specialist_id) WHERE status = 'open';
 
 CREATE INDEX IF NOT EXISTS ix_sales_specialist_date ON sales (specialist_id, business_date);
+
+-- What an admin entered, which is the question an audit asks.
+CREATE INDEX IF NOT EXISTS ix_sales_recorded_by ON sales (recorded_by)
+    WHERE recorded_by <> specialist_id;
 
 CREATE TABLE IF NOT EXISTS sale_lines (
     id           SERIAL PRIMARY KEY,
@@ -155,6 +169,8 @@ CREATE TABLE IF NOT EXISTS specialist_ledger (
     id            SERIAL PRIMARY KEY,
     specialist_id INTEGER NOT NULL REFERENCES specialists (id) ON DELETE CASCADE,
     kind          TEXT NOT NULL CHECK (kind IN ('purchase', 'payment')),
+    -- As on sales: whose debt it is above, who entered it here.
+    recorded_by   INTEGER NOT NULL REFERENCES specialists (id),
     -- Set on a purchase, null on a payment: a payment is against the balance, not against an item.
     product_id    INTEGER REFERENCES products (id),
     description   TEXT NOT NULL,

@@ -59,18 +59,30 @@ def sentinel(conn):
     """Delete every test specialist before and after each case, cascading their sales away."""
 
     def clean() -> None:
-        # The sales go first, and that ORDER is the schema talking: `sales.specialist_id` has no
-        # ON DELETE action, so a specialist who has billed cannot be deleted at all. That is the
-        # production rule — the sales are the salon's own record, and someone who leaves is
-        # deactivated rather than erased. Only a test ever removes both.
+        # The records go first, and that ORDER is the schema talking: neither
+        # `sales.specialist_id` nor `recorded_by` has an ON DELETE action, so a specialist who has
+        # billed — or who has ENTERED an entry for somebody else — cannot be deleted at all. That
+        # is the production rule twice over: the sales are the salon's own record and the audit
+        # trail is not destroyable, so someone who leaves is deactivated rather than erased. Only
+        # a test ever removes both.
+        #
+        # Matched on either column, because an admin appears in `recorded_by` on rows whose
+        # `specialist_id` is somebody else entirely.
+        sentinels = "(SELECT id FROM specialists WHERE telegram_user_id LIKE %(prefix)s)"
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM sales WHERE specialist_id IN "
-                "  (SELECT id FROM specialists WHERE telegram_user_id LIKE %s)",
-                (SENTINEL_PREFIX + "%",),
+                f"DELETE FROM specialist_ledger "
+                f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
+                {"prefix": SENTINEL_PREFIX + "%"},
             )
             cur.execute(
-                "DELETE FROM specialists WHERE telegram_user_id LIKE %s", (SENTINEL_PREFIX + "%",)
+                f"DELETE FROM sales "
+                f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
+                {"prefix": SENTINEL_PREFIX + "%"},
+            )
+            cur.execute(
+                "DELETE FROM specialists WHERE telegram_user_id LIKE %(prefix)s",
+                {"prefix": SENTINEL_PREFIX + "%"},
             )
 
     clean()
@@ -87,14 +99,15 @@ def make_specialist(conn, sentinel):
     """
     seq = {"n": 0}
 
-    def make(*disciplines: str, full_name: str = "Prueba Sentinel") -> dict:
+    def make(*disciplines: str, full_name: str = "Prueba Sentinel", is_admin: bool = False) -> dict:
         seq["n"] += 1
         telegram_user_id = f"{SENTINEL_PREFIX}{seq['n']:04d}"
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO specialists (specialist_ref, telegram_user_id, full_name) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (f"sentinel-{telegram_user_id}", telegram_user_id, full_name),
+                "INSERT INTO specialists "
+                "  (specialist_ref, telegram_user_id, full_name, is_admin) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (f"sentinel-{telegram_user_id}", telegram_user_id, full_name, is_admin),
             )
             specialist_id = cur.fetchone()["id"]
             for code in disciplines:
@@ -109,6 +122,7 @@ def make_specialist(conn, sentinel):
             "full_name": full_name,
             "disciplines": list(disciplines),
             "telegram_user_id": telegram_user_id,
+            "is_admin": is_admin,
         }
 
     return make

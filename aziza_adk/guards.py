@@ -77,14 +77,21 @@ def before_tool_guard(tool: Any, args: dict, tool_context: Any) -> dict | None:
     """Authorize a tool call. Identity only, and identity is the whole of it here.
 
     Every tool writes or reads against ONE specialist, and that specialist is what a commission
-    is paid to — so the question this layer answers is whether the session has one at all. It is
-    decidable from session state, which is why it is here rather than in a query.
+    is paid to — so the questions this layer answers are whether the session has one at all, and
+    whether it may name a different one. Both are decidable from session state, which is why they
+    are here rather than in a query.
+
+    `on_behalf_of` is the one argument that can move money to a person the sender is not. It is
+    refused here, off the row the edge resolved, so no wording in a turn can reach it — the prompt
+    is advisory and this is not.
     """
     name = getattr(tool, "name", "") or getattr(tool, "__name__", "")
     if name not in tools.SPECIALIST_TOOL_NAMES:
         return None
     if not session.specialist_id(tool_context):
         return _blocked("not_registered", tools.NOT_REGISTERED_MSG, name)
+    if str((args or {}).get("on_behalf_of") or "").strip() and not session.is_admin(tool_context):
+        return _blocked("not_an_admin", tools.NOT_AN_ADMIN_MSG, name)
     return None
 
 

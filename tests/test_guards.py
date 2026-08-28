@@ -80,6 +80,35 @@ def test_a_registered_specialist_is_allowed_through(ctx, name):
     assert guards.before_tool_guard(_tool(name), {}, ctx(who)) is None
 
 
+@pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES))
+def test_naming_another_specialist_is_refused_here_and_not_in_the_prompt(ctx, name):
+    """`on_behalf_of` is the one argument that can move money to a person the sender is not, so it
+    is decided off the row the edge resolved. The prompt is advisory; this is not."""
+    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "is_admin": False}
+    blocked = guards.before_tool_guard(_tool(name), {"on_behalf_of": "Zenaida"}, ctx(who))
+    assert blocked is not None
+    assert blocked["blocked_by_guard"] is True and blocked["error"] == "not_an_admin"
+
+
+@pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES))
+def test_an_admin_may_name_another_specialist(ctx, name):
+    who = {"id": 7, "full_name": "Zoila", "disciplines": [], "is_admin": True}
+    assert guards.before_tool_guard(_tool(name), {"on_behalf_of": "Zenaida"}, ctx(who)) is None
+
+
+def test_a_session_that_cannot_be_read_is_not_an_admin(ctx):
+    """Fails closed: an absent flag is not a permission."""
+    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"]}
+    blocked = guards.before_tool_guard(_tool("start_ticket"), {"on_behalf_of": "X"}, ctx(who))
+    assert blocked["error"] == "not_an_admin"
+
+
+def test_an_empty_name_is_not_an_attempt_to_name_anyone(ctx):
+    """A model that passes the argument blank must not be refused as if it had named somebody."""
+    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "is_admin": False}
+    assert guards.before_tool_guard(_tool("start_ticket"), {"on_behalf_of": "  "}, ctx(who)) is None
+
+
 def test_a_tool_the_guard_does_not_know_about_is_not_blocked_by_it(ctx):
     """It fires on a named set, so an unknown name passes here and is refused in the tool body.
     Asserted so the two-layer arrangement is on the record rather than inferred."""

@@ -41,6 +41,7 @@ def remember_specialist(
     specialist_ref: str,
     full_name: str,
     disciplines: tuple[str, ...],
+    is_admin: bool = False,
 ) -> None:
     _write(
         context,
@@ -50,8 +51,18 @@ def remember_specialist(
             "specialist_ref": specialist_ref,
             "full_name": full_name,
             "disciplines": list(disciplines),
+            "is_admin": bool(is_admin),
         },
     )
+
+
+def is_admin(context: Any) -> bool:
+    """May this sender record work against another specialist?
+
+    Read off the row the edge resolved, never off anything said during the turn. Fails closed on
+    a session that cannot be read.
+    """
+    return bool(specialist(context).get("is_admin"))
 
 
 def was_quoted(context: Any, sale_ref: str, total: Decimal) -> bool:

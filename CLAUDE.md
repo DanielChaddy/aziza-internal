@@ -47,9 +47,17 @@ what the specialist said against the catalog and reads the price off the row it 
 a price can arrive from the model, the salon's own figures stop being the ones on the receipt.
 
 **Identity is resolved at the edge, not in a tool.** `channel.py` matches the Telegram id against
-`specialists` before the Runner runs, and an unregistered sender never reaches the graph. Tools
-read the specialist from session state and never from an argument. A commission is what a person
-is paid; there must be no parameter in which a model could name someone it is not.
+`specialists` before the Runner runs, and an unregistered sender never reaches the graph. The
+SENDER is never an argument, and that half has no exceptions.
+
+**Whose work it is can be an argument, and only for an admin.** `on_behalf_of` is the one
+parameter that can move a commission to a person the sender is not, so it is gated on
+`specialists.is_admin` in `guards.before_tool_guard` — off the row the edge resolved, where no
+wording in a turn reaches it — and re-checked in the tool body. An admin does no salon work, so
+naming is REQUIRED of her: omitting it is refused rather than booked to her, because a sale in the
+admin's name is a commission paid to the wrong person. The name resolves deterministically through
+`staff.py`, two people called Yamilé come back as two candidates, `sales.recorded_by` records who
+typed it, and the ticket says *Trabajo de* so she reads the attribution before the money moves.
 
 **Money is `Decimal` and `NUMERIC(12,2)`, everywhere, with no exceptions.** If you find yourself
 reaching for a float, or writing arithmetic into a prompt, the change is wrong.

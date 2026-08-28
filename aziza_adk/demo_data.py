@@ -30,4 +30,14 @@ SPECIALISTS: tuple[dict, ...] = (
         "full_name": "Rosa Almánzar",
         "disciplines": ("nails", "wax"),
     },
+    # The administrator. No disciplines, because she records other people's work rather than
+    # doing any: every entry names whose it is, and there is nothing for her to be authorized to
+    # do herself (§3).
+    {
+        "specialist_ref": "esp-adm",
+        "telegram_user_id": "700000009",
+        "full_name": "Aziza Admin",
+        "disciplines": (),
+        "is_admin": True,
+    },
 )

@@ -56,13 +56,16 @@ def main() -> int:
                 )
             for person in demo_data.SPECIALISTS:
                 cur.execute(
-                    "INSERT INTO specialists (specialist_ref, telegram_user_id, full_name) "
-                    "VALUES (%(specialist_ref)s, %(telegram_user_id)s, %(full_name)s) "
+                    "INSERT INTO specialists "
+                    "  (specialist_ref, telegram_user_id, full_name, is_admin) "
+                    "VALUES (%(specialist_ref)s, %(telegram_user_id)s, %(full_name)s, "
+                    "        %(is_admin)s) "
                     "ON CONFLICT (specialist_ref) DO UPDATE SET "
                     "  telegram_user_id = EXCLUDED.telegram_user_id, "
-                    "  full_name = EXCLUDED.full_name, active = TRUE "
+                    "  full_name = EXCLUDED.full_name, is_admin = EXCLUDED.is_admin, "
+                    "  active = TRUE "
                     "RETURNING id",
-                    person,
+                    {**person, "is_admin": person.get("is_admin", False)},
                 )
                 specialist_id = cur.fetchone()["id"]
                 # Replaced wholesale rather than added to: a discipline removed from the dataset

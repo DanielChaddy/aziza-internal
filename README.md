@@ -7,14 +7,22 @@ the client across one or more payment methods, and at the end of the day receive
 
 **The users are the salon's staff, not its clients.** No client ever talks to this assistant.
 
+The administration uses the same assistant and the same tools, naming the specialist each entry
+belongs to. That name is required of her rather than defaulted, because she does no salon work and
+a sale in her name would be a commission paid to the wrong person.
+
 Architecture at a glance:
 
 - **One agent** (`aziza_adk/agents/sales.py`): there is nothing to route between, and it is still
   built through the platform's graph factory so the input screen is attached rather than
   remembered.
 - **Ten tools and two layers of guard** (`aziza_adk/tools.py`, `guards.py`): identity resolved at
-  the edge before the Runner, a deterministic discipline check, and a confirm-first gate that
-  refuses to charge a total the specialist has not been shown.
+  the edge before the Runner, a deterministic discipline check against the specialist the work is
+  booked to, and a confirm-first gate that refuses to charge a total the specialist has not been
+  shown.
+- **One argument that can move a commission** (`on_behalf_of`), gated on a column rather than on
+  wording: refused for anyone the database does not call an admin, required of anyone it does, and
+  recorded in `sales.recorded_by` alongside whose work it was.
 - **A price that is never a model output** (`aziza_adk/catalog.py`): what she said is resolved
   against the salon's catalog, and the price is read off the row. Which of the row's two prices
   is decided by a table of names (`names.py`), never by the model — and the ticket says when it
@@ -93,6 +101,9 @@ service that is not configured yet.
 9. **A voice note.** Say the same thing out loud — it takes the same path a typed message does.
 10. **Her own tab.** *"Me tomé un agua"* → RD$15.00 charged to her, not to a client.
 11. **The day.** *"¿Cómo voy hoy?"* → services, commission, tips, products sold, and what she owes.
+12. **The administration.** As `700000009`: *"Le hice manicura normal a Laura"* → asked whose work
+    it was, never booked to her. *"Yamilé le hizo manicura normal a Laura"* → the ticket, with
+    *Trabajo de: Yamilé Reyes* on it, and the commission on Yamilé's day rather than the admin's.
 
 ## Testing
 

@@ -80,14 +80,21 @@ def render_ticket(
     products_total: Decimal = ZERO,
     gender_label: str | None = None,
     assumed: bool = False,
+    worked_by: str | None = None,
 ) -> str:
     """The open ticket: who it is for, what was done, what was sold, and what it comes to.
 
     `gender_label` is passed only when a service on this ticket is priced differently for
     different clients, and `assumed` only when nobody recognized the name — so the specialist is
     told what to check exactly when checking it could change a figure.
+
+    `worked_by` is passed only when somebody OTHER than the person who did the work entered it,
+    which is the admin case. Naming her is the same idea as naming the client: the one thing that
+    could be wrong is put where the person who knows will read it before money moves.
     """
     rows = [f"Cuenta de {client_name}"]
+    if worked_by:
+        rows.append(f"Trabajo de: {worked_by}")
     if gender_label:
         rows.append(f"Precio: {gender_label}")
     rows += ["", *_line_rows(lines)]

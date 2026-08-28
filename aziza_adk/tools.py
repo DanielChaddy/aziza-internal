@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from conversation_core import fold
 from google.adk.tools import ToolContext
 
-from aziza_adk import catalog, config, money, names, queries, receipts, session
+from aziza_adk import catalog, config, money, names, queries, receipts, session, staff
 from aziza_adk.money import ZERO
 
 logger = logging.getLogger("aziza_adk.tools")
@@ -94,6 +94,11 @@ LINES_NOT_OFFERED_MSG = (
     "cliente. Quítalos primero y lo cambio."
 )
 NOTHING_OWED_MSG = "No tienes nada pendiente con el salón."
+NOT_AN_ADMIN_MSG = "Solo la administración puede registrar el trabajo de otra especialista."
+NEED_SPECIALIST_MSG = "Dime cuál especialista lo hizo y lo registro a su nombre."
+UNKNOWN_SPECIALIST_MSG = "No tengo a esa especialista en el salón."
+AMBIGUOUS_SPECIALIST_MSG = "Hay más de una especialista con ese nombre. ¿Cuál de estas fue?"
+SPECIALIST_BUSY_MSG = "Esa especialista ya tiene una cuenta abierta. Hay que cerrarla primero."
 MORE_THAN_OWED_MSG = "Ese monto pasa de lo que debes."
 AMBIGUOUS_SERVICE_MSG = "Hay más de un servicio con ese nombre. ¿Cuál de estos fue?"
 WRONG_DISCIPLINE_MSG = "Ese servicio no es de tu área, así que no puedo cargarlo a tu nombre."
@@ -141,7 +146,7 @@ def _failed(exc: Exception) -> dict:
     return {"error": "backend_unavailable", "message": BACKEND_DOWN_MSG}
 
 
-def _ticket_answer(conn, sale: dict, tool_context: Any) -> dict:
+def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = None) -> dict:
     """The rendered ticket, and the record that this specialist has now seen this total.
 
     Both happen HERE rather than in each caller, because a quote recorded without the specialist
@@ -172,8 +177,67 @@ def _ticket_answer(conn, sale: dict, tool_context: Any) -> dict:
             products_total=sale["products_total"],
             gender_label=label,
             assumed=sale["gender_source"] == names.DEFAULTED,
+            worked_by=worked_by,
         ),
     }
+
+
+def _acting(conn, tool_context: Any, on_behalf_of: str) -> tuple[staff.Person | None, dict | None]:
+    """Whose work this is: `(person, None)`, or `(None, error)` for the caller to return.
+
+    For an ordinary specialist it is herself and there is nothing to resolve. For an admin it is
+    whoever she named, resolved against the salon's own list — and NAMING IS REQUIRED. Omitting it
+    is refused rather than booked to the admin: she does no salon work, so a sale in her name is
+    a commission paid to the wrong person, and that is the failure this whole design exists to
+    make impossible (§3).
+    """
+    named = (on_behalf_of or "").strip()
+    if not session.is_admin(tool_context):
+        if named:
+            # The guard refused this already; a tool reached another way must refuse too.
+            return None, {"error": "not_an_admin", "message": NOT_AN_ADMIN_MSG}
+        who = session.specialist(tool_context)
+        return (
+            staff.Person(
+                specialist_id=session.specialist_id(tool_context),
+                name=str(who.get("full_name") or ""),
+                disciplines=session.disciplines(tool_context),
+            ),
+            None,
+        )
+
+    roster = staff.people(queries.working_specialists(conn))
+    if not named:
+        return None, {
+            "error": "specialist_required",
+            "message": NEED_SPECIALIST_MSG,
+            "options": [person.name for person in roster],
+        }
+    found = catalog.resolve(named, roster)
+    if found.candidates:
+        return None, {
+            "error": "ambiguous_specialist",
+            "message": AMBIGUOUS_SPECIALIST_MSG,
+            "options": [person.name for person in found.candidates],
+        }
+    if found.match is None:
+        return None, {
+            "error": "unknown_specialist",
+            "message": UNKNOWN_SPECIALIST_MSG,
+            "options": [person.name for person in roster],
+        }
+    return found.match, None
+
+
+def _attributed(person: staff.Person, tool_context: Any) -> str | None:
+    """The name to put on the ticket, or None when she is recording her own work.
+
+    Shown exactly when it could be wrong: an admin naming the wrong specialist moves a commission,
+    and the ticket is where she sees it before the money does.
+    """
+    if person.specialist_id == session.specialist_id(tool_context):
+        return None
+    return person.name
 
 
 #: What a specialist calls each client. The keys are folded; the values are what the column holds.
@@ -196,7 +260,10 @@ _GENDERS = {
 
 
 def start_ticket(
-    client_name: str, client_gender: str = "", tool_context: ToolContext = None
+    client_name: str,
+    client_gender: str = "",
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
 ) -> dict:
     """Open a new ticket for a client the specialist just worked on.
 
@@ -207,6 +274,8 @@ def start_ticket(
     Args:
         client_name: The client's name, as the specialist said it.
         client_gender: Only if she said so, in her own words. Empty otherwise.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"opened": true, "client_name": str, "priced_for": str}, or {"error", "message"}. Opening
@@ -230,14 +299,26 @@ def start_ticket(
 
     try:
         with queries.connect() as conn:
-            if queries.open_sale(conn, session.specialist_id(tool_context)):
-                return {"error": "ticket_already_open", "message": TICKET_ALREADY_OPEN_MSG}
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            own = person.specialist_id == session.specialist_id(tool_context)
+            if busy := queries.open_sale(conn, person.specialist_id):
+                # Named rather than guessed at: her open ticket may be for a different client
+                # entirely, and adding to it silently would rewrite someone else's sale.
+                return {
+                    "error": "ticket_already_open",
+                    "message": TICKET_ALREADY_OPEN_MSG if own else SPECIALIST_BUSY_MSG,
+                    "client_name": busy["client_name"],
+                    "specialist": person.name,
+                }
             sale = queries.create_sale(
                 conn,
-                session.specialist_id(tool_context),
+                person.specialist_id,
                 name,
                 client_gender=gender,
                 gender_source=source,
+                recorded_by=session.specialist_id(tool_context),
             )
     except Exception as exc:  # noqa: BLE001 - a failed turn leaves a specialist mid-sale
         return _failed(exc)
@@ -245,10 +326,16 @@ def start_ticket(
         "opened": True,
         "client_name": sale["client_name"],
         "priced_for": receipts.GENDER_LABELS[gender],
+        "worked_by": person.name,
     }
 
 
-def add_service(service: str, quantity: int = 1, tool_context: ToolContext = None) -> dict:
+def add_service(
+    service: str,
+    quantity: int = 1,
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
     """Add a service to the open ticket, at the price the salon charges for it.
 
     The price is NEVER an argument: this looks the service up in the salon's catalog and takes
@@ -258,6 +345,8 @@ def add_service(service: str, quantity: int = 1, tool_context: ToolContext = Non
     Args:
         service: What the specialist called the service, in their own words.
         quantity: How many times it was done. Defaults to 1.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         The updated ticket — {"client_name", "total", "ticket"} — or {"error", "message"}. On
@@ -269,7 +358,10 @@ def add_service(service: str, quantity: int = 1, tool_context: ToolContext = Non
         return {"error": "bad_quantity", "message": BAD_QUANTITY_MSG}
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
 
@@ -286,7 +378,9 @@ def add_service(service: str, quantity: int = 1, tool_context: ToolContext = Non
                     "message": UNKNOWN_SERVICE_MSG,
                     "options": list(catalog.names(queries.service_catalog(conn))),
                 }
-            if found.match.discipline not in session.disciplines(tool_context):
+            # HER areas, not the sender's: an admin recording a wax service for a nails
+            # specialist is the same wrong booking as the specialist doing it herself.
+            if found.match.discipline not in person.disciplines:
                 return {
                     "error": "wrong_discipline",
                     "message": WRONG_DISCIPLINE_MSG,
@@ -305,13 +399,18 @@ def add_service(service: str, quantity: int = 1, tool_context: ToolContext = Non
 
             queries.add_line(conn, sale["id"], found.match, quantity, unit_price)
             return _ticket_answer(
-                conn, queries.open_sale(conn, session.specialist_id(tool_context)), tool_context
+                conn,
+                queries.open_sale(conn, person.specialist_id),
+                tool_context,
+                _attributed(person, tool_context),
             )
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def set_client_gender(gender: str, tool_context: ToolContext = None) -> dict:
+def set_client_gender(
+    gender: str, on_behalf_of: str = "", tool_context: ToolContext = None
+) -> dict:
     """Correct which client the open ticket is priced for, and re-price everything on it.
 
     Use this when the specialist says the assistant got it wrong — the ticket is shown again with
@@ -319,6 +418,8 @@ def set_client_gender(gender: str, tool_context: ToolContext = None) -> dict:
 
     Args:
         gender: Who the client is, in the specialist's own words.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         The re-priced ticket — {"client_name", "total", "ticket"} — or {"error", "message"}. On
@@ -331,7 +432,10 @@ def set_client_gender(gender: str, tool_context: ToolContext = None) -> dict:
         return {"error": "bad_gender", "message": BAD_GENDER_MSG}
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
 
@@ -347,13 +451,21 @@ def set_client_gender(gender: str, tool_context: ToolContext = None) -> dict:
 
             queries.set_sale_gender(conn, sale["id"], canonical, names.STATED)
             return _ticket_answer(
-                conn, queries.open_sale(conn, session.specialist_id(tool_context)), tool_context
+                conn,
+                queries.open_sale(conn, person.specialist_id),
+                tool_context,
+                _attributed(person, tool_context),
             )
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def sell_product(product: str, quantity: int = 1, tool_context: ToolContext = None) -> dict:
+def sell_product(
+    product: str,
+    quantity: int = 1,
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
     """Add a product the client is buying to the open ticket, at the salon's price.
 
     Products pay the specialist NO commission. Say so if she asks; never imply otherwise.
@@ -361,6 +473,8 @@ def sell_product(product: str, quantity: int = 1, tool_context: ToolContext = No
     Args:
         product: What the specialist called the product, in their own words.
         quantity: How many. Defaults to 1.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         The updated ticket — {"client_name", "total", "ticket"} — or {"error", "message"}. On
@@ -372,7 +486,10 @@ def sell_product(product: str, quantity: int = 1, tool_context: ToolContext = No
         return {"error": "bad_quantity", "message": BAD_QUANTITY_MSG}
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
 
@@ -389,14 +506,21 @@ def sell_product(product: str, quantity: int = 1, tool_context: ToolContext = No
             # No discipline check, and that is deliberate: anyone may sell a drink.
             queries.add_product_line(conn, sale["id"], found.match, quantity)
             return _ticket_answer(
-                conn, queries.open_sale(conn, session.specialist_id(tool_context)), tool_context
+                conn,
+                queries.open_sale(conn, person.specialist_id),
+                tool_context,
+                _attributed(person, tool_context),
             )
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def show_ticket(tool_context: ToolContext = None) -> dict:
+def show_ticket(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
     """Show the open ticket: the client, each service with its price, and the total.
+
+    Args:
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"client_name", "total", "ticket"} — send "ticket" to the specialist as it came, without
@@ -406,17 +530,24 @@ def show_ticket(tool_context: ToolContext = None) -> dict:
         return refused
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
-            return _ticket_answer(conn, sale, tool_context)
+            return _ticket_answer(conn, sale, tool_context, _attributed(person, tool_context))
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def void_ticket(tool_context: ToolContext = None) -> dict:
+def void_ticket(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
     """Cancel the open ticket without charging anything. Use it when a service was recorded
     wrong; the specialist then opens a new one.
+
+    Args:
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"voided": true} or {"error", "message"}.
@@ -425,20 +556,27 @@ def void_ticket(tool_context: ToolContext = None) -> dict:
         return refused
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
             queries.void_sale(conn, sale["id"])
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
-    return {"voided": True}
+    return {"voided": True, "worked_by": person.name}
 
 
 # --- the money --------------------------------------------------------------
 
 
 def record_payment(
-    method: str, amount: str, tip: str = "0", tool_context: ToolContext = None
+    method: str,
+    amount: str,
+    tip: str = "0",
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
 ) -> dict:
     """Record one payment against the open ticket, and close it once the balance reaches zero.
 
@@ -449,6 +587,8 @@ def record_payment(
         method: How they paid — cash, card or transfer, in the specialist's own words.
         amount: What was handed over for the ticket, in numbers. Never includes the tip.
         tip: The tip on this payment, in numbers. "0" when there was none.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         While money is still owed, {"remaining": str}. On the last payment, {"paid": true,
@@ -470,7 +610,10 @@ def record_payment(
 
     try:
         with queries.connect() as conn:
-            sale = queries.open_sale(conn, session.specialist_id(tool_context))
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
             lines = queries.sale_lines(conn, sale["id"])
@@ -518,7 +661,12 @@ def record_payment(
         return _failed(exc)
 
 
-def buy_product(product: str, quantity: int = 1, tool_context: ToolContext = None) -> dict:
+def buy_product(
+    product: str,
+    quantity: int = 1,
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
     """Record that the SPECIALIST took a product for herself, at her own price.
 
     This is not a sale and never touches a client's ticket: it is a debit against her, which she
@@ -527,6 +675,8 @@ def buy_product(product: str, quantity: int = 1, tool_context: ToolContext = Non
     Args:
         product: What she called the product, in her own words.
         quantity: How many. Defaults to 1.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"charged": str, "balance": str} — what this cost her and what she now owes in total —
@@ -538,6 +688,9 @@ def buy_product(product: str, quantity: int = 1, tool_context: ToolContext = Non
         return {"error": "bad_quantity", "message": BAD_QUANTITY_MSG}
     try:
         with queries.connect() as conn:
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
             found = catalog.resolve(product, queries.product_catalog(conn))
             if found.candidates:
                 return {
@@ -548,24 +701,33 @@ def buy_product(product: str, quantity: int = 1, tool_context: ToolContext = Non
             if found.match is None:
                 return {"error": "unknown_product", "message": UNKNOWN_PRODUCT_MSG}
 
-            who = session.specialist_id(tool_context)
-            charged = queries.record_purchase(conn, who, found.match, quantity, _today())
+            charged = queries.record_purchase(
+                conn,
+                person.specialist_id,
+                found.match,
+                quantity,
+                _today(),
+                recorded_by=session.specialist_id(tool_context),
+            )
             return {
                 "charged": money.rd(charged),
                 "product": found.match.name,
-                "balance": money.rd(queries.debt_balance(conn, who)),
+                "owed_by": person.name,
+                "balance": money.rd(queries.debt_balance(conn, person.specialist_id)),
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def settle_debt(amount: str, tool_context: ToolContext = None) -> dict:
+def settle_debt(amount: str, on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
     """Record a payment the specialist made against what she owes the salon.
 
     Part of it is ordinary rather than an exception — she may pay some now and carry the rest.
 
     Args:
         amount: What she paid, in numbers.
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"paid": str, "balance": str} — what she just paid and what is left — or
@@ -581,7 +743,10 @@ def settle_debt(amount: str, tool_context: ToolContext = None) -> dict:
         return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
     try:
         with queries.connect() as conn:
-            who = session.specialist_id(tool_context)
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            who = person.specialist_id
             owed = queries.debt_balance(conn, who)
             if owed <= ZERO:
                 return {"error": "nothing_owed", "message": NOTHING_OWED_MSG}
@@ -593,33 +758,50 @@ def settle_debt(amount: str, tool_context: ToolContext = None) -> dict:
                     "message": MORE_THAN_OWED_MSG,
                     "balance": money.rd(owed),
                 }
-            queries.record_settlement(conn, who, paid, _today(), "Pago a cuenta")
-            return {"paid": money.rd(paid), "balance": money.rd(queries.debt_balance(conn, who))}
+            queries.record_settlement(
+                conn,
+                who,
+                paid,
+                _today(),
+                "Pago a cuenta",
+                recorded_by=session.specialist_id(tool_context),
+            )
+            return {
+                "paid": money.rd(paid),
+                "owed_by": person.name,
+                "balance": money.rd(queries.debt_balance(conn, who)),
+            }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
 
-def my_day(tool_context: ToolContext = None) -> dict:
+def my_day(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
     """What this specialist has made today so far, and what she owes the salon.
 
     The same figures and the same wording the end-of-day message uses, so the two can never
     disagree about a day.
+
+    Args:
+        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
+            work this is, in her own words. An ordinary specialist leaves it empty.
 
     Returns:
         {"summary": str} — send it as it came — or {"error", "message"}.
     """
     if (refused := _unauthorized(tool_context)) is not None:
         return refused
-    who = session.specialist(tool_context)
     day = _today()
     try:
         with queries.connect() as conn:
-            totals = queries.day_totals(conn, session.specialist_id(tool_context), day)
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            totals = queries.day_totals(conn, person.specialist_id, day)
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
     return {
         "summary": summary_text(
-            who.get("full_name", ""),
+            person.name,
             day,
             totals["services_total"],
             totals["tips"],

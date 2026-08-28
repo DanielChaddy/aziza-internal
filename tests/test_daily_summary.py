@@ -45,13 +45,24 @@ def sold(ctx, make_specialist):
     who = make_specialist("nails", full_name="Yamilé Sentinel")
     context = ctx(who)
     tools.start_ticket("Laura", tool_context=context)
-    tools.add_service("manicura normal", 1, context)
-    tools.record_payment("efectivo", "300", "200", context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "300", "200", tool_context=context)
     return who
 
 
 def _today():
     return tools._today()
+
+
+def _mine(outbox, who) -> list[str]:
+    """Just this specialist's messages.
+
+    `daily_summary.run` walks the WHOLE salon, so a tally over its counts measures whatever else
+    the database happens to hold — a demo driven by hand, another test's leftovers — rather than
+    the property under test. Filtering by the sentinel's own chat id is what keeps these
+    re-runnable and order-independent, which is the rule the rest of the suite already follows.
+    """
+    return [body for chat_id, body in outbox if chat_id == who["telegram_user_id"]]
 
 
 def _claims(conn, specialist_id) -> int:
@@ -67,24 +78,24 @@ def _claims(conn, specialist_id) -> int:
 
 
 def test_a_specialist_who_billed_today_gets_one(sold, live, outbox, conn):
-    counts = daily_summary.run(_today())
-    assert counts["sent"] == 1
-    chat_id, body = outbox[0]
-    assert chat_id == sold["telegram_user_id"]
+    daily_summary.run(_today())
+    assert len(_mine(outbox, sold)) == 1
 
 
 def test_a_specialist_who_billed_nothing_gets_nothing(make_specialist, live, outbox):
-    make_specialist("nails")
-    assert daily_summary.run(_today())["sent"] == 0
-    assert outbox == []
+    idle = make_specialist("nails")
+    daily_summary.run(_today())
+    assert _mine(outbox, idle) == []
 
 
 def test_an_open_ticket_is_not_a_days_work(ctx, make_specialist, live, outbox):
     """Only a closed sale counts; a ticket left open is money not yet taken."""
-    context = ctx(make_specialist("nails"))
+    who = make_specialist("nails")
+    context = ctx(who)
     tools.start_ticket("Laura", tool_context=context)
-    tools.add_service("manicura normal", 1, context)
-    assert daily_summary.run(_today())["sent"] == 0
+    tools.add_service("manicura normal", 1, tool_context=context)
+    daily_summary.run(_today())
+    assert _mine(outbox, who) == []
 
 
 # --- [2] The figures ----------------------------------------------------------------------
@@ -92,7 +103,7 @@ def test_an_open_ticket_is_not_a_days_work(ctx, make_specialist, live, outbox):
 
 def test_the_message_carries_all_four_figures(sold, live, outbox):
     daily_summary.run(_today())
-    body = outbox[0][1]
+    body = _mine(outbox, sold)[0]
     assert "Servicios: RD$300.00" in body
     assert f"Tu comisión ({config.COMMISSION_PCT}%): RD$120.00" in body
     assert "Propinas: RD$200.00" in body
@@ -103,7 +114,7 @@ def test_the_message_and_my_day_cannot_disagree(sold, ctx, live, outbox):
     """Same renderer, same figures — so a specialist checking mid-afternoon and the night's
     message are answering the same question the same way."""
     daily_summary.run(_today())
-    assert tools.my_day(ctx(sold))["summary"] == outbox[0][1]
+    assert tools.my_day(tool_context=ctx(sold))["summary"] == _mine(outbox, sold)[0]
 
 
 def test_the_recorded_claim_holds_the_figures_that_were_sent(sold, live, outbox, conn):
@@ -128,34 +139,39 @@ def test_a_second_run_sends_nothing(sold, live, outbox, conn):
     sale recorded today — a demo driven by hand, say — is not this test's subject."""
     daily_summary.run(_today())
     outbox.clear()
-    counts = daily_summary.run(_today())
-    assert counts["sent"] == 0
-    assert outbox == []
+    daily_summary.run(_today())
+    assert _mine(outbox, sold) == []
     assert _claims(conn, sold["id"]) == 1
 
 
 def test_a_failed_send_records_nothing_so_the_next_run_retries(sold, live, broken_outbox, conn):
     """The claim goes back. A claim committed before the send is how a person is silently
     skipped for the day with no way to notice."""
-    assert daily_summary.run(_today())["send_failed"] == 1
+    daily_summary.run(_today())
     assert _claims(conn, sold["id"]) == 0
 
 
-def test_the_retry_after_a_failed_send_actually_sends(sold, live, monkeypatch):
+def test_the_retry_after_a_failed_send_actually_sends(sold, live, monkeypatch, conn):
     """The whole point of rolling the claim back: the person is told one run late, rather than
     silently skipped for the day with nothing to notice."""
-    attempts = {"n": 0}
+    seen = {"hers": 0}
 
     async def send_text(chat_id, body):
-        attempts["n"] += 1
-        ok = attempts["n"] > 1
+        # Only THIS specialist's first send fails. run() walks the whole salon, so failing every
+        # call would make the assertion depend on whatever else the database holds.
+        if chat_id != sold["telegram_user_id"]:
+            return type("R", (), {"ok": True, "error_code": None})()
+        seen["hers"] += 1
+        ok = seen["hers"] > 1
         return type("R", (), {"ok": ok, "error_code": None if ok else 403})()
 
     monkeypatch.setattr(daily_summary.bot_client, "send_text", send_text)
 
-    assert daily_summary.run(_today())["send_failed"] == 1
-    assert daily_summary.run(_today())["sent"] == 1
-    assert attempts["n"] == 2
+    daily_summary.run(_today())
+    assert _claims(conn, sold["id"]) == 0, "the claim goes back so the next run retries her"
+    daily_summary.run(_today())
+    assert _claims(conn, sold["id"]) == 1
+    assert seen["hers"] == 2
 
 
 def test_a_simulated_run_records_nothing(sold, outbox, conn, monkeypatch):
@@ -169,14 +185,15 @@ def test_a_simulated_run_records_nothing(sold, outbox, conn, monkeypatch):
 def test_a_simulated_run_does_not_reach_the_network(sold, outbox, monkeypatch):
     monkeypatch.setattr(config, "SUMMARY_SEND_MODE", "simulate")
     daily_summary.run(_today())
-    assert outbox == []
+    assert _mine(outbox, sold) == []
 
 
 def test_a_simulated_run_leaves_the_live_one_free_to_send(sold, outbox, conn, monkeypatch):
     monkeypatch.setattr(config, "SUMMARY_SEND_MODE", "simulate")
     daily_summary.run(_today())
     monkeypatch.setattr(config, "SUMMARY_SEND_MODE", "live")
-    assert daily_summary.run(_today())["sent"] == 1
+    daily_summary.run(_today())
+    assert _claims(conn, sold["id"]) == 1
 
 
 # --- [4] Another day is another claim -----------------------------------------------------
