@@ -99,6 +99,31 @@ def stand_down_absent(conn: psycopg.Connection, keep_refs: list[str]) -> int:
         return cur.rowcount
 
 
+def retire_absent(
+    conn: psycopg.Connection, product_refs: list[str], service_refs: list[str]
+) -> int:
+    """Deactivate every product and service whose ref the dataset no longer holds. Answers how many.
+
+    What `stand_down_absent` is for people, and for the same reason: a row left active after the
+    dataset drops it is still sellable and still listed in the prompt's catalog block, so a
+    de-duplication that only edits the dataset does not reach the database at all (§5).
+
+    Deactivated rather than deleted — a past sale line names the row, and that is the salon's own
+    record of what it charged.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE products SET active = FALSE WHERE active AND NOT (product_ref = ANY(%(refs)s))",
+            {"refs": product_refs},
+        )
+        retired = cur.rowcount
+        cur.execute(
+            "UPDATE services SET active = FALSE WHERE active AND NOT (service_ref = ANY(%(refs)s))",
+            {"refs": service_refs},
+        )
+        return retired + cur.rowcount
+
+
 def working_specialists(conn: psycopg.Connection) -> list[dict]:
     """Everyone whose work can be recorded, with the disciplines each holds.
 

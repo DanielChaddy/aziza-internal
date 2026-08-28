@@ -91,10 +91,15 @@ def main(argv: list[str] | None = None) -> int:
                         "SELECT %(sid)s, d.id FROM disciplines d WHERE d.code = %(code)s",
                         {"sid": specialist_id, "code": code},
                     )
-        # The dataset is the source of truth for who may talk to this assistant — queries.py
-        # holds why.
+        # The dataset is the source of truth for who may talk to this assistant, and for what the
+        # salon sells — queries.py holds why.
         stood_down = queries.stand_down_absent(
             conn, [person["specialist_ref"] for person in people]
+        )
+        retired = queries.retire_absent(
+            conn,
+            [row["product_ref"] for row in catalog_data.PRODUCTS],
+            [row["service_ref"] for row in catalog_data.SERVICES],
         )
         conn.commit()
 
@@ -104,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(catalog_data.DISCIPLINES)} disciplines, {len(staff_data.STAFF)} staff"
         + (f", {demo} demo specialists" if demo else "")
         + (f"; stood down {stood_down} no longer in the dataset" if stood_down else "")
+        + (f"; retired {retired} no longer sold" if retired else "")
     )
     return 0
 
