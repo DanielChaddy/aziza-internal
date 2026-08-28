@@ -84,6 +84,7 @@ NOT_REGISTERED_MSG = (
 NO_TICKET_MSG = "No tienes una cuenta abierta. Dime el nombre de la clienta y la abro."
 TICKET_ALREADY_OPEN_MSG = "Ya tienes una cuenta abierta. Ciérrala o anúlala antes de abrir otra."
 NEED_CLIENT_NAME_MSG = "¿Cómo se llama la clienta?"
+NAME_IS_THE_WORK_MSG = "Eso es lo que le hiciste, no su nombre. ¿Cómo se llama la clienta?"
 UNKNOWN_SERVICE_MSG = "Ese servicio no está en la lista del salón."
 UNKNOWN_PRODUCT_MSG = "Ese producto no está en la lista del salón."
 AMBIGUOUS_PRODUCT_MSG = "Hay más de un producto con ese nombre. ¿Cuál de estos era?"
@@ -302,6 +303,17 @@ def start_ticket(
             person, refused = _acting(conn, tool_context, on_behalf_of)
             if refused is not None:
                 return refused
+            # A ticket named after the work prices the wrong client and prints the wrong receipt,
+            # and nothing downstream can tell it from a real name — so it is refused here.
+            sold = catalog.mentions(name, queries.service_catalog(conn)) or catalog.mentions(
+                name, queries.product_catalog(conn)
+            )
+            if sold is not None:
+                return {
+                    "error": "name_is_the_work",
+                    "message": NAME_IS_THE_WORK_MSG,
+                    "matched": sold.name,
+                }
             own = person.specialist_id == session.specialist_id(tool_context)
             if busy := queries.open_sale(conn, person.specialist_id):
                 # Named rather than guessed at: her open ticket may be for a different client

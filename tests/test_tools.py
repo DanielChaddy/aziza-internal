@@ -48,6 +48,22 @@ def test_a_ticket_needs_a_client_name(ctx):
     assert tools.start_ticket("   ", tool_context=ctx(who))["error"] == "no_client_name"
 
 
+def test_a_ticket_named_after_the_work_is_refused(working):
+    """She said what she did and never said who for. Booking it opens a ticket for a client
+    called "Axilas y bc", priced off the name table — wrong on the receipt and wrong on the total.
+    """
+    context, _ = working
+    answer = tools.start_ticket("Axilas y bc", tool_context=context)
+    assert answer["error"] == "name_is_the_work"
+    assert answer["matched"] == "Axilas"
+
+
+def test_a_client_whose_name_contains_a_catalog_word_is_still_served(working):
+    """The guard reads whole words, so "Yaritza" is a client and not a Ritz."""
+    context, _ = working
+    assert "error" not in tools.start_ticket("Yaritza", tool_context=context)
+
+
 @pytest.mark.parametrize("quantity", [0, -1, 21, 1.5, "dos", None])
 def test_a_quantity_outside_the_range_is_refused(ctx, quantity):
     who = {"id": 1, "full_name": "X", "disciplines": ["nails"]}
