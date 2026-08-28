@@ -117,6 +117,33 @@ ref it no longer holds, because a Telegram id the database keeps active is a cre
 `summary.sendMode` still defaults to `simulate`: only the administrator is registered, and she
 does no salon work, so nobody is owed an end-of-day message yet.
 
+## Rebuilding after a schema change
+
+`db/schema.sql` only creates what is absent, so a changed column never reaches a built database.
+The rebuild is: check nothing real is there, drop, then upgrade with `dbBuild.enabled=true`.
+
+```bash
+# 1. REFUSE if anything real exists. sales is money billed and specialist_ledger is what a
+#    specialist owes; neither can be reconstructed, and both are empty only until somebody works.
+# 2. drop every table in `aziza` — `aziza_sessions` is ADK's and is left alone.
+# 3. helm upgrade --set dbBuild.enabled=true
+kubectl -n z-aziza delete pod aziza-0        # <- REQUIRED. Why, below.
+```
+
+**That last step is not tidying, and leaving it out strands the service.** The old image cannot
+read the new schema, so its `/healthz` starts failing the moment the tables are dropped — and a
+single-replica StatefulSet under `OrderedReady` **will not roll an update while its pod is
+unready**. The unreadiness blocks the very update that would fix it, `helm upgrade` sits until it
+times out, and the release records as failed while the old pod serves errors. Deleting the pod is
+what breaks the deadlock; the StatefulSet recreates it at the new image immediately.
+
+The StatefulSet is still right — `replicas: 1` is the at-most-one-process guarantee a Deployment
+cannot give (see `templates/statefulset.yaml`). This is the cost of it, and it is only paid on a
+schema change that the running image cannot read.
+
+**Expect a gap.** Between the drop and the new pod passing readiness the service answers errors,
+and Telegram deliveries in that window are lost rather than queued. Do it when nobody is working.
+
 ## What is not routed
 
 `/simulate` runs a turn as whatever sender it is given and authenticates nobody. `ingress.yaml`
