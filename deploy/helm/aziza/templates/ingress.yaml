@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aziza.fullname" . }}
+  labels:
+    {{- include "aziza.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+    # A turn is capped at MODEL_TURN_TIMEOUT_SECONDS (60s) and Telegram's delivery POST waits on
+    # the 200, so the default 60s proxy timeout sits exactly on the app's own ceiling.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    # A voice note is fetched by the service from Telegram rather than posted to it, so the
+    # inbound body is JSON only.
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ include "aziza.tlsSecretName" . }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          # An ALLOWLIST, and deliberately no catch-all: an unlisted route has no backend, so
+          # anything added later is unreachable from the internet by default rather than exposed
+          # until someone remembers to deny it. /simulate is the route that must stay off it —
+          # it runs a turn as any sender it is given (README § Run it).
+          {{- range list "/webhook" "/healthz" "/health" }}
+          - path: {{ . }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "aziza.fullname" $ }}
+                port:
+                  name: http
+          {{- end }}

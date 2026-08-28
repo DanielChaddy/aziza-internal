@@ -1,0 +1,79 @@
+{{- if .Values.summary.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "aziza.fullname" . }}-summary
+  labels:
+    {{- include "aziza.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.summary.schedule | quote }}
+  # Declared rather than converted: the schedule is written in the salon's own hours, and a UTC
+  # cron would move the end of the day by one hour twice a year for no reason anyone remembers.
+  timeZone: {{ .Values.config.TIMEZONE | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # A missed window is not made up: the script's business date defaults to today, so a run fired
+  # late enough to land after midnight would report the wrong day.
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      # Retried, unlike the database build: the claim row is taken before the send and committed
+      # only once it has succeeded (README § The end-of-day message), so a retry re-sends nothing
+      # that already landed.
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "aziza.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ include "aziza.fullname" . }}
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: summary
+              image: {{ include "aziza.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              envFrom:
+                - secretRef:
+                    name: {{ .Values.existingSecret }}
+                - configMapRef:
+                    name: {{ include "aziza.fullname" . }}-env
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret }}
+                      key: DATABASE_URL
+                # Set here rather than in the ConfigMap: the webhook has no use for it, and this
+                # one value is the difference between a dry run and money reported to a person.
+                - name: SUMMARY_SEND_MODE
+                  value: {{ .Values.summary.sendMode | quote }}
+              command: ["python", "scripts/daily_summary.py"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: home
+                  mountPath: /home/app
+              resources:
+                {{- toYaml .Values.summary.resources | nindent 16 }}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: home
+              emptyDir: {}
+{{- end }}

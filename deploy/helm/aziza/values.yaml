@@ -1,0 +1,110 @@
+# Salón Aziza — production values.
+#
+# Deliberately small. Things that are NOT values, and why, are documented in the templates that
+# hold them: the webhook's replica count (a correctness constraint — see statefulset.yaml), the
+# workload kinds, containerPort, probe paths and thresholds, service.type, and the ingress path
+# allowlist. There is no `extraEnv` escape hatch on purpose: new config goes in `config` below, so
+# it is reviewable in git.
+#
+# A KEY OMITTED FROM `config` IS NOT A KEY SET TO EMPTY. configmap-env.yaml ranges over this map,
+# so every key present is injected — and aziza_adk/config.py reads `os.getenv(NAME, default)`,
+# which returns "" for a set-but-empty variable and silently clobbers the default. There is no
+# form that means "unset": list a key here only to CHANGE it, and delete it otherwise.
+
+image:
+  repository: ghcr.io/danielchaddy/aziza-internal
+  # No default tag on purpose: `helm upgrade --set image.tag=$(git rev-parse --short HEAD)`.
+  # An empty tag fails the render (see _helpers.tpl) rather than resolving to :latest.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  # GHCR is private and there is no registry integration to inject this, unlike DOCR on this
+  # cluster. deploy/helm/README.md § Prerequisites owns how it is created.
+  - name: ghcr
+
+# Secret holding the real secrets, created OUT OF BAND so the chart never renders them and
+# `helm get manifest` / `helm template` cannot leak them:
+#
+#   kubectl -n z-aziza create secret generic aziza-secrets \
+#     --from-env-file=deploy/.env --dry-run=client -o yaml | kubectl apply -f -
+#
+# deploy/.env.example lists every key it must hold and where each value comes from.
+existingSecret: aziza-secrets
+
+ingress:
+  host: aziza.codeaton.com.do
+  className: nginx
+  clusterIssuer: letsencrypt-prod
+  # tlsSecretName follows the cluster convention <host>-tls; derived in _helpers.tpl.
+
+# Non-secret configuration. A free-form map because the app reads os.getenv directly. Keys are
+# verbatim from aziza_adk/config.py and the channel package's settings.py. Read the omission rule
+# in this file's header first.
+config:
+  APP_NAME: "aziza_adk"
+  TIMEZONE: "America/Santo_Domingo"
+
+  # --- Observability (agent-telemetry) ---
+  # THE ENDPOINT IS THE ON-SWITCH: unset, the telemetry install registers nothing and WARNING+
+  # still reaches stdout. An in-cluster ClusterIP address deliberately, so a misconfiguration
+  # cannot ship a specialist's figures off-site.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://observability-opentelemetry-collector.observability.svc.cluster.local:4318"
+  # The collector maps service.name -> Prometheus' `job` label and Grafana maps it -> Loki's
+  # `service_name` for the trace<->logs jump.
+  OTEL_SERVICE_NAME: "aziza"
+  # The privacy boundary rather than a verbosity preference: INFO lines carry what the specialist
+  # typed and the tool arguments behind a commission, and this keeps them out of Loki.
+  OTLP_LOG_LEVEL: "WARNING"
+
+  # OMITTED ON PURPOSE, each falling through to its default in aziza_adk/config.py:
+  #   AGENT_MODEL, TRANSCRIBE_MODEL         -> the repository's pinned Gemini models
+  #   SALON_NAME                            -> Salón Aziza
+  #   COMMISSION_PCT                        -> 40
+  #   MODEL_TURN_TIMEOUT_SECONDS            -> 60
+  #   TELEGRAM_*                            -> channel_telegram/settings.py defaults
+  # TELEGRAM_ALLOWED_USER_IDS is omitted for a different reason than medical's equivalent: it is
+  # not the containment here. aziza_adk/channel.py matches the sender against `specialists` before
+  # the Runner runs (PROJECT_DEFINITION §3), so an unregistered id is already refused with no
+  # model call. The allowlist is a second, optional layer.
+  # DATABASE_URL and ADK_SESSION_DB_URL are omitted because they are secrets, and arrive from the
+  # Secret as explicit `env:` entries (see _helpers.tpl).
+  # REQUIRE_DB is a test-gate variable and has no meaning in a running service.
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    # Memory only — no CPU limit on purpose (see statefulset.yaml).
+    memory: 1Gi
+
+# One-shot database build — deploy/helm/README.md § Building the database owns how to run it.
+# OFF by default so an ordinary upgrade leaves the database alone. It needs no wipe confirmation:
+# db/schema.sql is idempotent and the seeder upserts, so a run against a populated database
+# re-applies rather than destroys.
+dbBuild:
+  enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# The end-of-day message each specialist who billed that day receives.
+summary:
+  enabled: true
+  # 21:00 in the salon's own timezone, which the CronJob declares rather than converting.
+  schedule: "0 21 * * *"
+  # `simulate` logs what would be sent and WRITES NO CLAIM, so a dry run cannot mark a day as
+  # already reported. It is the default because the seeded specialists carry INVENTED Telegram ids
+  # (aziza_adk/demo_data.py): a live run today would attempt sends that no account can receive.
+  # Flip to `live` in the same change that registers the salon's real specialists.
+  sendMode: simulate
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

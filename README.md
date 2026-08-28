@@ -116,7 +116,9 @@ idempotent by construction — the claim row is taken before the send and commit
 succeeded — and **a simulated run records nothing**, so a dry run cannot mark a day as already
 reported.
 
-Running it on a schedule needs a scheduler and a chart, and neither exists yet.
+On the cluster it runs as `cronjob/aziza-summary` on the same image, at 21:00 in the salon's
+own timezone. It ships set to `simulate` and sends nothing until the salon's real specialists
+are registered — [`deploy/helm/README.md`](deploy/helm/README.md) is the owner of the deploy.
 
 ## The shared packages
 

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: aziza
+description: Salón Aziza — Telegram assistant the salon's specialists record their work through
+type: application
+version: 0.1.0
+# appVersion is omitted: the deployed artifact is identified by image.tag (a git SHA), passed at
+# upgrade time. A second version string here would only ever drift from it.

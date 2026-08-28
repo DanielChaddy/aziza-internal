@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+# A StatefulSet, not a Deployment, and it holds no volumes — this is purely for the at-most-one-pod
+# guarantee. A Deployment (even with strategy: Recreate) creates a replacement pod while the old one
+# is still Terminating/Unknown on an unreachable node, which is two live processes. A StatefulSet at
+# replicas: 1 refuses to create the ordinal-0 replacement until the old pod is confirmed gone.
+# The trade: on node failure the webhook stays down until the node recovers or the pod is
+# force-deleted, instead of rescheduling.
+kind: StatefulSet
+metadata:
+  name: {{ include "aziza.fullname" . }}
+  labels:
+    {{- include "aziza.labels" . | nindent 4 }}
+spec:
+  # NOT a value, and must never become one. Two module-level structures in the shared channel
+  # package assume ONE process on ONE event loop, and both fail SILENTLY — no crash, no error:
+  #   channel_telegram/dedupe.py:17  _seen, the in-memory update-id claim. A second process has an
+  #                                  empty _seen, so a Telegram retry re-runs the turn and the
+  #                                  specialist is charged for the same ticket twice.
+  #   channel_telegram/locks.py:12   _locks, the per-conversation asyncio.Lock that serializes a
+  #                                  sender's turns. Loop-local, so it does not serialize across
+  #                                  processes.
+  # Scaling out is a code project (Redis + Postgres advisory locks), not a replica-count change.
+  replicas: 1
+  serviceName: {{ include "aziza.fullname" . }}-headless
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "aziza.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aziza.labels" . | nindent 8 }}
+        {{- include "aziza.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when non-secret config changes: aziza_adk/config.py reads os.getenv at
+        # IMPORT time, so a restart is the only way a changed value takes effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-env.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "aziza.fullname" . }}
+      automountServiceAccountToken: false
+      # aziza_adk/config.py MODEL_TURN_TIMEOUT_SECONDS caps one turn at 60s, so anything near the
+      # usual 10s default SIGKILLs mid-turn and drops the message INVISIBLY: the webhook already
+      # returned 200 and Telegram will not redeliver.
+      terminationGracePeriodSeconds: 75
+      securityContext:
+        runAsNonRoot: true
+        # Explicit UID is required: the Dockerfile has no USER, so runAsNonRoot alone makes the
+        # kubelet refuse to start the pod. /app is root-owned mode 755, so UID 1000 can read it.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: webhook
+          image: {{ include "aziza.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+          {{- include "aziza.envFrom" . | nindent 10 }}
+          volumeMounts:
+            # readOnlyRootFilesystem needs writable scratch. Python silently skips __pycache__
+            # writes; HOME is set because some libraries expect a writable one.
+            - name: tmp
+              mountPath: /tmp
+            - name: home
+              mountPath: /home/app
+          startupProbe:
+            # Generous budget: aziza_adk/runtime.py builds the ADK Runner and the
+            # DatabaseSessionService, and google-adk + genai + grpc imports are slow.
+            httpGet: { path: /openapi.json, port: http }
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            # NOT /healthz. That endpoint round-trips the database, so liveness on it turns a
+            # Postgres blip into CrashLoopBackOff whose backoff grows to 5 minutes — the webhook
+            # then stays down AFTER Postgres recovers. /openapi.json is served by FastAPI without
+            # touching the DB, and unlike a tcpSocket probe it proves the ASGI app is serving.
+            httpGet: { path: /openapi.json, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            # 4s, NOT the k8s default of 1s: the platform's own health budget
+            # (HEALTH_TIMEOUT_S = 2.0 in channel_telegram/webhook.py) is longer than 1s, so the
+            # default would flap the pod against a slow-but-healthy database.
+            timeoutSeconds: 4
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+            # No CPU limit on purpose. CFS throttling on a single-worker event loop that a
+            # specialist is waiting on is worse than letting it burst; this pod is I/O-bound on the
+            # model. The memory limit IS set: the nodes have no swap, so OOM is the only relief
+            # valve and it should be scoped to this pod rather than letting the kubelet pick a
+            # victim.
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: home
+          emptyDir: {}

@@ -119,3 +119,61 @@ jobs:
             ADO_PAT=${{ secrets.ADO_PAT }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy
+    needs: image
+    # Skipped until the cluster prerequisites exist — deploy/helm/README.md § Prerequisites. A
+    # repository VARIABLE rather than a secret, because it is an on-switch and not a credential:
+    # without it a push to a half-provisioned cluster would fail every run and teach everyone to
+    # ignore a red build.
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NAMESPACE: z-aziza
+      RELEASE: aziza
+      # Selected by name rather than taken from the kubeconfig's current-context: this account has
+      # more than one cluster, and deploying to the wrong one would succeed.
+      KUBE_CONTEXT: do-sfo2-k8s-1-33-1-do-3-sfo2-1755028278626
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # From Helm's own release rather than a marketplace action: one less publisher to trust for
+      # the step that holds cluster credentials.
+      - name: Install helm
+        run: |
+          set -euo pipefail
+          curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-amd64.tar.gz -o /tmp/helm.tgz
+          tar -xzf /tmp/helm.tgz -C /tmp
+          sudo install -m0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Cluster credentials
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          install -m0700 -d "$RUNNER_TEMP/kube"
+          printf '%s' "$KUBECONFIG_B64" | base64 -d > "$RUNNER_TEMP/kube/config"
+          chmod 0600 "$RUNNER_TEMP/kube/config"
+          echo "KUBECONFIG=$RUNNER_TEMP/kube/config" >> "$GITHUB_ENV"
+
+      # --atomic rolls the release back if it does not become ready, so a bad image leaves the
+      # previous one serving rather than a half-applied release. The Secret and the pull secret are
+      # NOT created here: they are out-of-band prerequisites, so this job holds no app credential.
+      - name: helm upgrade --install
+        run: |
+          set -euo pipefail
+          helm --kube-context "$KUBE_CONTEXT" -n "$NAMESPACE" \
+            upgrade --install "$RELEASE" deploy/helm/aziza \
+            --set image.tag=${{ steps.sha.outputs.short }} \
+            --atomic --timeout 10m
+
+      - name: What is running
+        run: |
+          helm --kube-context "$KUBE_CONTEXT" -n "$NAMESPACE" history "$RELEASE" | tail -3
