@@ -103,15 +103,19 @@ helm -n z-aziza upgrade --install aziza deploy/helm/aziza \
   --set image.tag=$(git rev-parse --short HEAD) --set dbBuild.enabled=true --wait
 ```
 
-**It loads the salon's real catalog, and three invented specialists.** `scripts/seed_catalog.py`
-applies `db/schema.sql`, then `aziza_adk/catalog_data.py` — the salon's own services and products
-at the salon's own prices — and then `aziza_adk/demo_data.py`, which is three people who do not
-exist holding Telegram ids nobody owns. There is no schema-only path.
+**It loads the salon's real catalog and its real people.** `scripts/seed_catalog.py` applies
+`db/schema.sql`, then `aziza_adk/catalog_data.py` — the salon's own services and products at the
+salon's own prices — and then `aziza_adk/staff_data.py`. There is no schema-only path.
 
-So a fresh release comes up able to price everything correctly and unable to serve anyone: an
-unregistered sender is refused at the edge before the model runs. That is also why
-`summary.sendMode` defaults to `simulate` — nothing can receive a live message yet. Registering
-the salon's own specialists with their real Telegram ids is what remains.
+**The invented specialists are NOT seeded here.** They live behind `--with-demo-specialists`,
+which this Job does not pass, so a real database carries only people who exist.
+
+**Removing someone from the dataset revokes them.** The seed stands down every specialist whose
+ref it no longer holds, because a Telegram id the database keeps active is a credential — see
+`queries.stand_down_absent`. Deactivated rather than deleted: her sales are the salon's record.
+
+`summary.sendMode` still defaults to `simulate`: only the administrator is registered, and she
+does no salon work, so nobody is owed an end-of-day message yet.
 
 ## What is not routed
 

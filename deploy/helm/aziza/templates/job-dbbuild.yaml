@@ -33,9 +33,9 @@ spec:
           # seed_catalog.py calls queries.apply_schema itself, so there is no psql to need and
           # no out-of-band ConfigMap to carry the SQL.
           #
-          # It loads the salon's REAL catalog and, alongside it, three INVENTED specialists
-          # (aziza_adk/demo_data.py) — nobody real can drive the assistant until the salon's own
-          # are registered. deploy/helm/README.md § Building the database.
+          # It loads the salon's REAL catalog and REAL people, and deliberately does not pass
+          # --with-demo-specialists: a production database carries nobody invented.
+          # deploy/helm/README.md § Building the database.
           image: {{ include "aziza.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:

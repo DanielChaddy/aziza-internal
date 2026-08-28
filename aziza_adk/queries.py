@@ -80,6 +80,25 @@ def specialist_by_telegram_id(conn: psycopg.Connection, telegram_user_id: str) -
     )
 
 
+def stand_down_absent(conn: psycopg.Connection, keep_refs: list[str]) -> int:
+    """Deactivate every specialist whose ref is not in `keep_refs`. Answers how many.
+
+    The dataset is the source of truth for WHO MAY TALK TO THIS ASSISTANT: a Telegram id the
+    database does not hold active reaches nothing (§3). Without this, deleting someone from the
+    dataset and re-seeding would leave their id working — a credential nobody meant to keep.
+
+    Deactivated rather than deleted, which is the same rule the schema enforces on `sales`: the
+    salon's record of what she billed stays, and she is stood down rather than erased.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE specialists SET active = FALSE "
+            "WHERE active AND NOT (specialist_ref = ANY(%(refs)s))",
+            {"refs": keep_refs},
+        )
+        return cur.rowcount
+
+
 def working_specialists(conn: psycopg.Connection) -> list[dict]:
     """Everyone whose work can be recorded, with the disciplines each holds.
 

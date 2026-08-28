@@ -210,3 +210,12 @@ def test_a_failed_turn_still_tells_the_specialist_something(client, known, fake_
     http = fake_http(bot_client, sent())
     _post(client, _update(text="hola"))
     assert http.requests[0]["json"]["text"] == channel.FALLBACK_TEXT
+
+
+def test_the_bot_token_cannot_reach_the_log():
+    """Telegram puts the token in the URL path and httpx logs request lines at INFO, so an
+    unconfigured logger writes a live credential on every turn. Asserted on the level rather than
+    on a captured line: what matters is that INFO from that logger never gets emitted at all."""
+    import logging
+
+    assert logging.getLogger("httpx").level >= logging.WARNING

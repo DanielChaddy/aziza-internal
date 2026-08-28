@@ -30,6 +30,13 @@ from aziza_adk import config, queries, runtime, session, tools
 
 logger = logging.getLogger("aziza_adk.telegram")
 
+# Telegram carries the bot token in the URL PATH, and httpx logs every request line at INFO — so
+# left alone this writes a live credential into the logs on every single turn. Silenced rather
+# than redacted: there is nothing in an httpx request line worth the risk of getting a filter
+# slightly wrong. WARNING and above still reach the log.
+# TODO: belongs in agent-platform's channel-telegram, which owns the client that builds the URL.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # These four reach a specialist with NO model in the path, so the register is fixed at the
 # literal. `tests/test_voice.py` gates them by their names — docs/BRAND_VOICE.md.
 FALLBACK_TEXT = "Se me complicó procesar eso. Inténtalo de nuevo en un momento."

@@ -56,7 +56,7 @@ across both repositories at once, overlay the editable copies afterwards:
 
 ```bash
 docker compose up -d --wait db                # Postgres 16 on :5434, two databases
-./.venv/bin/python scripts/seed_catalog.py    # idempotent
+./.venv/bin/python scripts/seed_catalog.py --with-demo-specialists   # idempotent
 adk web                                       # pick `aziza_adk`, http://localhost:8000
 ```
 
@@ -101,9 +101,9 @@ service that is not configured yet.
 9. **A voice note.** Say the same thing out loud — it takes the same path a typed message does.
 10. **Her own tab.** *"Me tomé un agua"* → RD$15.00 charged to her, not to a client.
 11. **The day.** *"¿Cómo voy hoy?"* → services, commission, tips, products sold, and what she owes.
-12. **The administration.** As `700000009`: *"Le hice manicura normal a Laura"* → asked whose work
-    it was, never booked to her. *"Yamilé le hizo manicura normal a Laura"* → the ticket, with
-    *Trabajo de: Yamilé Reyes* on it, and the commission on Yamilé's day rather than the admin's.
+12. **The administration.** As the administrator: *"Le hice manicura normal a Laura"* → asked
+    whose work it was, never booked to her. *"Yamilé le hizo manicura normal a Laura"* → the
+    ticket, with *Trabajo de: Yamilé Reyes* on it, and the commission on Yamilé's day.
 
 ## Testing
 
