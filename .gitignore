@@ -1,0 +1,13 @@
+.env
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.adk/
+pgdata/
+eval/history/
+.claude/
+*.pat
+ado.pat

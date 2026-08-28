@@ -1,0 +1,28 @@
+# Local PostgreSQL 16, holding two databases:
+#   * aziza           — business schema (created via POSTGRES_DB; schema by db/schema.sql)
+#   * aziza_sessions  — ADK session store (created empty by db/init.sql; ADK owns its tables)
+# The session store gets its own database — agent-platform docs/ADK_LESSONS_LEARNED.md §6a.
+
+services:
+  db:
+    image: postgres:16
+    container_name: aziza_postgres
+    environment:
+      POSTGRES_USER: aziza
+      POSTGRES_PASSWORD: aziza
+      POSTGRES_DB: aziza
+    ports:
+      # 5434: the other assistants in this working tree publish 5432 and 5433, and a demo that
+      # cannot run beside them is a demo that has to be scheduled.
+      - "${POSTGRES_HOST_PORT:-5434}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aziza -d aziza"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:

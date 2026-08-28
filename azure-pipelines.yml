@@ -1,0 +1,122 @@
+# CI for aziza. The shape is banking/azure-pipelines.yml's — read that header for why the trigger
+# and the weekly schedule are what they are, rather than a second copy of it here.
+#
+# TWO STAGES, not five. There is no image stage and no deploy stage because this service has no
+# registry credential and no cluster release yet; both are on the board. Adding an image stage
+# before then would push nothing and gate nothing.
+trigger:
+  branches:
+    include:
+      - main
+pr: none
+
+# Weekly, because two things this pipeline resolves move without a commit here: the Infra
+# templates, and the agent-platform tags requirements.txt installs from.
+schedules:
+  - cron: '0 6 * * 1'
+    displayName: Weekly main build
+    branches:
+      include:
+        - main
+    always: true
+
+resources:
+  repositories:
+    - repository: infra
+      type: git
+      name: Infra/Infra
+      ref: refs/heads/master        # Infra's default branch is master, not main
+
+stages:
+  # On the pip path ruff installs standalone and this project's dependencies are never installed,
+  # so static analysis reaches no private pin and needs no credential.
+  - template: templates/stages/quality.yml@infra
+    parameters:
+      dependsOn: []
+      forceLanguages: ['python']    # detection is `find | head -n1`; do not depend on its order
+      workingDirectory: '.'
+      pythonVersion: '3.12'
+      pythonPackageManager: pip
+      # Blocking: this repository is clean under both halves of `make lint`.
+      softFail: false
+
+  # Ours rather than templates/stages/test.yml@infra: pip needs a credential for the private
+  # pins, and scripts/python-test.sh installs and runs pytest in one call, so there is no seam
+  # inside it to reach. The steps template underneath is Infra's, unchanged.
+  - stage: test
+    displayName: Test
+    dependsOn: []
+    variables:
+      repoRoot: $(Agent.BuildDirectory)/self
+      templatesRoot: $(Agent.BuildDirectory)/infra
+    jobs:
+      - job: test_python
+        displayName: 'Test: Python'
+        pool:
+          name: ci-pool
+        variables:
+          - group: 'Pipeline secrets'      # ADO_PAT, for the private pins below
+          # tests/conftest.py reads this: where CI has provisioned the database, an absent or
+          # empty one is a failure rather than a green run full of skips.
+          - name: REQUIRE_DB
+            value: '1'
+          # The suite derives dates in Python and reads timestamps back through a session pinned
+          # to the salon's timezone (aziza_adk/queries.py); a UTC agent puts the two a day apart
+          # for four hours out of every twenty-four.
+          - name: TZ
+            value: America/Santo_Domingo
+        steps:
+          - checkout: self
+            path: self
+          - checkout: infra
+            path: infra
+
+          # pip clones the private pins with git, so the credential belongs to git rather than to
+          # pip. URL-scoped, so it reaches no other host, and `--global` persists across this
+          # job's steps so Infra's install step needs to know none of it.
+          - bash: |
+              set -euo pipefail
+              git config --global "http.${PLATFORM_URL}.extraheader" \
+                "AUTHORIZATION: basic $(printf ':%s' "${ADO_PAT}" | base64 -w0)"
+            displayName: 'Credential for the private platform pins'
+            env:
+              ADO_PAT: $(ADO_PAT)
+              PLATFORM_URL: https://dev.azure.com/mdtx/Assistants/_git/agent-platform
+
+          # Ahead of the steps template's own copy, so this install and Infra's land on the same
+          # interpreter — the one the image runs (Dockerfile).
+          - task: UsePythonVersion@0
+            displayName: 'Setup Python 3.12'
+            inputs:
+              versionSpec: '3.12'
+
+          # --wait blocks on the healthcheck docker-compose.yml already declares, so the seed
+          # below cannot race the server. The default DATABASE_URL already names this service.
+          - bash: docker compose up -d --wait db
+            displayName: 'Postgres'
+            workingDirectory: $(repoRoot)
+
+          # Installed here because the seed script imports the package, and again by Infra's
+          # script, which owns the environment pytest runs in.
+          - bash: |
+              set -euo pipefail
+              python -m pip install --upgrade pip
+              python -m pip install -r requirements.txt
+            displayName: 'Install dependencies'
+            workingDirectory: $(repoRoot)
+
+          # Idempotent, and re-runnable. README § Run it.
+          - bash: python scripts/seed_mock.py
+            displayName: 'Seed'
+            workingDirectory: $(repoRoot)
+
+          - template: templates/test/python.yml@infra
+            parameters:
+              repoRoot: $(repoRoot)
+              templatesRoot: $(templatesRoot)
+              workingDirectory: '.'
+              pythonVersion: '3.12'
+              packageManager: pip
+              # Zero until there is a coverage baseline to hold, and not a silent pass: Infra's
+              # results-gate.sh still fails the job if no test-results file is produced.
+              coverageThreshold: 0
