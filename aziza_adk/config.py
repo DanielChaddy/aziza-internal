@@ -24,7 +24,7 @@ from conversation_core import flag as _flag  # noqa: E402
 from conversation_core import int_ as _int  # noqa: E402
 
 # --- Models -----------------------------------------------------------------
-AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gemini-3.5-flash")
+AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gemini-3.5-flash-lite")
 # What reads a voice note. Its own variable rather than the agent's: reading audio is not
 # reasoning, so downgrading one must never silently change what hears a specialist.
 TRANSCRIBE_MODEL: str = os.getenv("TRANSCRIBE_MODEL", "gemini-3.5-flash")
