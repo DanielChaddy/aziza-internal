@@ -10,7 +10,7 @@ This is the operations runbook. For the local development stack see the reposito
 | Namespace | `z-aziza` |
 | Release | `aziza` |
 | Ingress | `ingress-nginx`, class `nginx`, LoadBalancer `134.209.140.10` |
-| Host | `aziza.codeaton.com.do` |
+| Host | `aziza.danielchaddy.com` — deliberately NOT under the client's zone, which would name this service beside its siblings and publish that to Certificate Transparency |
 | TLS | `cert-manager` ClusterIssuer `letsencrypt-prod` (HTTP-01) |
 | Registry | `ghcr.io/danielchaddy/aziza-internal`, pull secret `ghcr` — created here, because GHCR has no registry integration on this cluster |
 | Database | DO Managed Postgres `dev-db-pgsql` (sfo2, PG 18) — databases `aziza` and `aziza_sessions` |
@@ -28,9 +28,14 @@ Five things this chart does not create, in the order they are needed. None of th
 both. They must be separate databases: ADK creates its own tables in whatever it is pointed at, and
 pointed at the business schema it collides with it.
 
-**2 · The DNS record.** `aziza.codeaton.com.do` as an `A` record to `134.209.140.10`, the
-ingress-nginx LoadBalancer. cert-manager's HTTP-01 challenge cannot complete before this resolves,
-so the certificate stays `False` and the host serves the default backend's certificate.
+**2 · The DNS record.** `aziza.danielchaddy.com` as an `A` record to `134.209.140.10`, the
+ingress-nginx LoadBalancer. That zone is hosted at GoDaddy rather than in this DigitalOcean
+account, so the record is created there and `doctl` cannot see it. cert-manager's HTTP-01 challenge
+cannot complete before it resolves, so the certificate stays `False` and the host serves the
+default backend's certificate.
+
+Issuance publishes the hostname to public Certificate Transparency logs permanently. That is how
+CT works and cannot be opted out of, which is why the name lives outside the client's zone.
 
 **3 · The pull secret.** GHCR is private and DOKS injects nothing for it, unlike DOCR. A GitHub
 token with `read:packages` only:
@@ -59,7 +64,7 @@ Secret carries:
 
 ```bash
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
-     -d url=https://aziza.codeaton.com.do/webhook -d secret_token=<TELEGRAM_WEBHOOK_SECRET>
+     -d url=https://aziza.danielchaddy.com/webhook -d secret_token=<TELEGRAM_WEBHOOK_SECRET>
 ```
 
 ## Deploy

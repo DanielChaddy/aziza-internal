@@ -33,7 +33,7 @@ imagePullSecrets:
 existingSecret: aziza-secrets
 
 ingress:
-  host: aziza.codeaton.com.do
+  host: aziza.danielchaddy.com
   className: nginx
   clusterIssuer: letsencrypt-prod
   # tlsSecretName follows the cluster convention <host>-tls; derived in _helpers.tpl.
