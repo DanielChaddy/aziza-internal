@@ -1,0 +1,76 @@
+# CI on GitHub-hosted runners: the two halves of `make check`, as two independent jobs.
+#
+# The split is a credential boundary. ruff installs standalone, so `quality` never resolves this
+# project's dependencies and needs no secret; `test` installs requirements.txt, whose platform
+# packages come from a private Azure DevOps repository and therefore does.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Weekly, because what a run resolves moves without a commit here: the agent-platform tags
+  # requirements.txt installs from, and the runner image.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      # Both halves, for the reason the Makefile gives.
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      # tests/conftest.py reads this: an absent database is a failure rather than a green run
+      # full of skips.
+      REQUIRE_DB: '1'
+      # The suite derives dates in Python and reads timestamps back through a session pinned to
+      # the salon's timezone (aziza_adk/queries.py); a UTC runner puts the two a day apart for
+      # four hours out of every twenty-four.
+      TZ: America/Santo_Domingo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # pip clones the private pins with git, so the credential belongs to git rather than to pip.
+      # URL-scoped, so it reaches no other host. The header is derived from the secret rather than
+      # equal to it, which is why it is masked by hand.
+      - name: Credential for the private platform pins
+        env:
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+          PLATFORM_URL: https://dev.azure.com/mdtx/Assistants/_git/agent-platform
+        run: |
+          set -euo pipefail
+          header="$(printf ':%s' "$ADO_PAT" | base64 -w0)"
+          echo "::add-mask::$header"
+          git config --global "http.${PLATFORM_URL}.extraheader" "AUTHORIZATION: basic $header"
+
+      # --wait blocks on the healthcheck docker-compose.yml declares, so the seed cannot race the
+      # server. The default DATABASE_URL already names the port it publishes.
+      - name: Postgres
+        run: docker compose up -d --wait db
+
+      - run: pip install -r requirements.txt
+
+      # Idempotent, and re-runnable. README § Run it.
+      - run: python scripts/seed_mock.py
+
+      # pytest exits 5 on an empty collection, so a suite that silently stops being discovered
+      # fails this job rather than reporting green.
+      - run: python -m pytest

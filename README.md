@@ -90,7 +90,7 @@ Two layers.
 
 ```bash
 make check                 # the GATE — lint + the deterministic suite. Must be green.
-REQUIRE_DB=1 make test     # an absent database is a failure rather than a skip
+REQUIRE_DB=1 make test     # what CI runs: an absent database is a failure
 ```
 
 - **`pytest` is the regression gate**, and it reaches no model and no network. Three quarters of
@@ -98,6 +98,9 @@ REQUIRE_DB=1 make test     # an absent database is a failure rather than a skip
   asserted from values alone, which is what lets the arithmetic behind a commission be held at all.
   Without a database the rest skip; `REQUIRE_DB=1` turns those skips into failures. Run it and
   read the count from the run rather than from this sentence.
+- **CI runs both of the commands above** on every push to `main`, weekly, and on demand:
+  [`.github/workflows/ci.yml`](.github/workflows/ci.yml), on GitHub-hosted runners. Lint needs no
+  credential; the test job installs the private platform pins and reads an `ADO_PAT` secret.
 - **`eval/`** drives the real graph over conversational cases and scores every reply with
   `eval/voice_checks.py`. Cases flip run-to-run even at temperature 0, so it is a signal and
   deliberately not wired into `pytest`.

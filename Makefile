@@ -1,4 +1,4 @@
-# The gates. Nothing outside this checkout runs them, so a skipped run is a silent one.
+# The gates, and the same commands .github/workflows/ci.yml runs.
 #
 # `lint` runs both halves: one that checked only `ruff check` would pass a tree that
 # `ruff format --check` fails.

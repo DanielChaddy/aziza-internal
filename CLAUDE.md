@@ -26,7 +26,7 @@ A specialist-facing constant is named `*_MSG` or `*_TEXT`. That convention is no
 ## Commands
 
 ```bash
-make check                            # lint + the deterministic gate. The whole of it.
+make check                            # lint + the deterministic gate. What CI runs.
 make lint                             # ruff check AND ruff format --check — both halves
 make format
 make test
