@@ -26,4 +26,11 @@ STAFF: tuple[dict, ...] = (
         "disciplines": (),
         "is_admin": True,
     },
+    {
+        "specialist_ref": "stf-002",
+        "telegram_user_id": "7676141148",
+        "full_name": "Mariana Pernía",
+        "disciplines": ("wax",),
+        "is_admin": False,
+    },
 )

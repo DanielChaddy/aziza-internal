@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pathlib
 
+from aziza_adk import demo_data, staff_data
+
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _CHART = _ROOT / "deploy" / "helm" / "aziza"
 
@@ -128,6 +130,9 @@ def test_summary_declares_the_salon_timezone_rather_than_converting() -> None:
     assert "timeZone:" in _CRON
 
 
-def test_summary_defaults_to_simulate() -> None:
-    """The seeded specialists carry invented Telegram ids, so a live run today sends nowhere."""
-    assert "sendMode: simulate" in _VALUES
+def test_the_summary_sends_and_everyone_registered_can_receive() -> None:
+    """`live` attempts a send to whoever the seed registers, and an invented id sends nowhere —
+    while `simulate` writes no claim, so the day would still read as unreported."""
+    assert "sendMode: live" in _VALUES
+    invented = {p["telegram_user_id"] for p in demo_data.SPECIALISTS}
+    assert not {p["telegram_user_id"] for p in staff_data.STAFF} & invented

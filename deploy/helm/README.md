@@ -114,8 +114,9 @@ which this Job does not pass, so a real database carries only people who exist.
 ref it no longer holds, because a Telegram id the database keeps active is a credential — see
 `queries.stand_down_absent`. Deactivated rather than deleted: her sales are the salon's record.
 
-`summary.sendMode` still defaults to `simulate`: only the administrator is registered, and she
-does no salon work, so nobody is owed an end-of-day message yet.
+`summary.sendMode` is `live`: the seed registers real people with real Telegram ids, so a
+specialist who billed that day receives her end-of-day message. The administrator does no salon
+work and is owed none.
 
 ## Rebuilding after a schema change
 

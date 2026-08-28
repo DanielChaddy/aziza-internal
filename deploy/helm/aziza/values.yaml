@@ -98,10 +98,9 @@ summary:
   # 21:00 in the salon's own timezone, which the CronJob declares rather than converting.
   schedule: "0 21 * * *"
   # `simulate` logs what would be sent and WRITES NO CLAIM, so a dry run cannot mark a day as
-  # already reported. It is the default because the seeded specialists carry INVENTED Telegram ids
-  # (aziza_adk/demo_data.py): a live run today would attempt sends that no account can receive.
-  # Flip to `live` in the same change that registers the salon's real specialists.
-  sendMode: simulate
+  # already reported. `live` holds only while every specialist the seed registers carries a real
+  # Telegram id (aziza_adk/staff_data.py) — an invented one attempts a send no account receives.
+  sendMode: live
   resources:
     requests:
       cpu: 100m
