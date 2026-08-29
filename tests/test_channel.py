@@ -219,3 +219,86 @@ def test_the_bot_token_cannot_reach_the_log():
     import logging
 
     assert logging.getLogger("httpx").level >= logging.WARNING
+
+
+# --- a spent quota says so, rather than asking her to try again ---------------------------------
+
+
+class _Wrapped(Exception):
+    """Shaped like the SDK's error: the status is an attribute, not the message."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__("boom")
+        self.code = code
+
+
+def test_a_spent_quota_is_recognized_off_the_status():
+    assert channel._is_quota_exhausted(_Wrapped(429))
+
+
+def test_a_spent_quota_is_recognized_through_ADKs_wrapping():
+    """ADK re-raises the SDK's error inside its own, so the status is on the cause."""
+    inner = _Wrapped(429)
+    outer = Exception("adk")
+    outer.__cause__ = inner
+    assert channel._is_quota_exhausted(outer)
+
+
+def test_another_failure_is_not_mistaken_for_a_spent_quota():
+    """A 500 recovers in a moment and FALLBACK_TEXT is the right answer to it; a 429 does not."""
+    assert not channel._is_quota_exhausted(_Wrapped(500))
+    assert not channel._is_quota_exhausted(ValueError("nothing to do with quota"))
+
+
+class _Runner:
+    """A Runner that fails the way the real one does, without building a graph."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+        self.session_service = self
+
+    async def get_session(self, **_):
+        return None
+
+    async def create_session(self, **_):
+        return None
+
+    def run_async(self, **_):
+        async def agen():
+            raise self._exc
+            yield  # pragma: no cover - unreachable, makes this an async generator
+
+        return agen()
+
+
+@pytest.mark.anyio
+async def test_a_spent_quota_tells_her_so_instead_of_the_fallback(monkeypatch):
+    monkeypatch.setattr(channel.runtime, "get_runner", lambda: _Runner(_Wrapped(429)))
+    reply = await channel.run_turn(
+        SENDER,
+        {
+            "id": 1,
+            "specialist_ref": "esp-001",
+            "full_name": "Yamilé Reyes",
+            "disciplines": ["nails"],
+        },
+        "hola",
+    )
+    assert reply == channel.QUOTA_EXHAUSTED_TEXT
+
+
+@pytest.mark.anyio
+async def test_any_other_failure_still_reaches_the_channels_fallback(monkeypatch):
+    """It must RAISE: the fallback lives in the channel, and swallowing here would silence it."""
+    monkeypatch.setattr(channel.runtime, "get_runner", lambda: _Runner(_Wrapped(500)))
+    with pytest.raises(Exception, match="boom"):
+        await channel.run_turn(
+            SENDER,
+            {
+                "id": 1,
+                "specialist_ref": "esp-001",
+                "full_name": "Yamilé Reyes",
+                "disciplines": ["nails"],
+            },
+            "hola",
+        )
