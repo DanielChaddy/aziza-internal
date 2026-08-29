@@ -94,11 +94,11 @@ def test_an_amount_that_is_not_an_amount_is_refused(ctx, amount):
         ("efectivo", "cash"),
         ("Efectivo", "cash"),
         ("cash", "cash"),
-        ("tarjeta", "card"),
-        ("TARJETA", "card"),
-        ("débito", "card"),
-        ("transferencia", "transfer"),
-        ("Transferencia", "transfer"),
+        ("banreservas", "banreservas"),
+        ("BANRESERVAS", "banreservas"),
+        ("Banco de Reservas", "banreservas"),
+        ("bhd", "bhd"),
+        ("BHD", "bhd"),
     ],
 )
 def test_every_way_of_saying_a_method_reaches_the_same_column_value(spoken, canonical):
@@ -245,19 +245,60 @@ def test_a_split_payment_keeps_the_ticket_open_until_it_adds_up(working):
     tools.add_service("manicura normal", 1, tool_context=context)
     first = tools.record_payment("efectivo", "100", "0", tool_context=context)
     assert first["paid"] is False and first["remaining"] == "RD$200.00"
-    second = tools.record_payment("tarjeta", "200", "0", tool_context=context)
+    second = tools.record_payment("banreservas", "200", "0", tool_context=context)
     assert second["paid"] is True
     assert "Efectivo — RD$100.00" in second["receipt"]
-    assert "Tarjeta — RD$200.00" in second["receipt"]
+    assert "Banreservas — RD$200.00" in second["receipt"]
 
 
-def test_paying_more_than_is_owed_is_refused_rather_than_absorbed(working):
-    """It is either a typo or a tip, and guessing which writes the wrong commission either way."""
+def test_cash_over_the_total_comes_back_as_change(working, conn):
+    """She handed over a note. The difference is the client's and leaves the drawer with her."""
     context, _ = working
     tools.start_ticket("Laura", tool_context=context)
     tools.add_service("manicura normal", 1, tool_context=context)
     answer = tools.record_payment("efectivo", "500", "0", tool_context=context)
-    assert answer["error"] == "overpayment" and answer["remaining"] == "RD$300.00"
+    assert answer["paid"] is True
+    assert "Vuelto: RD$200.00" in answer["receipt"]
+    assert "Propina" not in answer["receipt"]
+    row = queries.fetchone(
+        conn,
+        "SELECT amount, tip, change_given FROM sale_payments ORDER BY id DESC LIMIT 1",
+    )
+    # `amount` is what the TICKET received, so the totals still add up to the ticket.
+    assert (row["amount"], row["tip"], row["change_given"]) == (
+        Decimal("300.00"),
+        Decimal("0.00"),
+        Decimal("200.00"),
+    )
+
+
+def test_a_transfer_over_the_total_is_a_tip(working):
+    """Nobody sends 500 by mistake when the ticket says 300, and no change can be handed back."""
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    answer = tools.record_payment("bhd", "500", "0", tool_context=context)
+    assert answer["paid"] is True
+    assert "Propina: RD$200.00" in answer["receipt"]
+    assert "Vuelto" not in answer["receipt"]
+
+
+def test_what_she_says_beats_the_method_default(working):
+    """The default is a guess about an ordinary case, and she was there."""
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    answer = tools.record_payment("efectivo", "500", "0", extra="propina", tool_context=context)
+    assert "Propina: RD$200.00" in answer["receipt"] and "Vuelto" not in answer["receipt"]
+
+
+def test_an_extra_she_words_unrecognizably_is_asked_about(working):
+    """Refused rather than defaulted: the argument was set, so she meant something by it."""
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    answer = tools.record_payment("efectivo", "500", "0", extra="ni idea", tool_context=context)
+    assert answer["error"] == "bad_extra" and answer["extra"] == "RD$200.00"
 
 
 def test_a_tip_rides_on_the_payment_and_stays_out_of_the_total(working, conn):
@@ -610,3 +651,85 @@ def test_a_debt_recorded_by_the_owner_is_owed_by_the_specialist(owner, ctx, make
     assert answer["balance"] == "RD$15.00"
     assert answer["owed_by"] == "Zenaida Prueba"
     assert "Lo que debes al salón: RD$15.00" in tools.my_day(tool_context=ctx(her))["summary"]
+
+
+# --- [10] A client who leaves owing -------------------------------------------------------------
+# The ticket cannot stay open: one open ticket per specialist is what makes "my current ticket"
+# mean anything, so a client who has not finished paying would otherwise stop the specialist
+# serving anybody else.
+
+
+def _ticket_for(context, client: str = "Laura") -> None:
+    tools.start_ticket(client, tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+
+
+def test_a_client_can_leave_owing_and_the_specialist_carries_on(working, conn):
+    """THE property. Closing with a balance is what frees her for the next client."""
+    context, who = working
+    _ticket_for(context)
+    tools.record_payment("efectivo", "100", "0", tool_context=context)
+    answer = tools.close_ticket_with_debt(tool_context=context)
+
+    assert answer["owes"] == "RD$200.00"
+    assert "QUEDA DEBIENDO: RD$200.00" in answer["receipt"]
+    assert queries.open_sale(conn, who["id"]) is None, "she can open the next ticket"
+    row = queries.fetchone(conn, "SELECT status FROM sales ORDER BY id DESC LIMIT 1")
+    assert row["status"] == "partial"
+
+
+def test_what_she_owes_meets_her_at_the_next_ticket(working):
+    """Recording a balance nobody is ever shown would be bookkeeping for its own sake. The moment
+    it is useful is the one moment somebody is standing in front of her."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+    assert tools.start_ticket("Carmen", tool_context=context)["owed_from_before"] == "RD$300.00"
+
+
+def test_a_client_who_owes_nothing_is_not_told_about_it(working):
+    context, _ = working
+    assert "owed_from_before" not in tools.start_ticket("Laura", tool_context=context)
+
+
+def test_one_client_however_she_is_spelled(working):
+    """Matched folded, so an accent or a capital does not open a second balance for one person."""
+    context, _ = working
+    _ticket_for(context, "MARÍA")
+    tools.close_ticket_with_debt(tool_context=context)
+    assert tools.start_ticket("maria", tool_context=context)["owed_from_before"] == "RD$300.00"
+
+
+def test_a_settled_ticket_has_nothing_to_leave_owing(working):
+    context, _ = working
+    _ticket_for(context)
+    tools.record_payment("efectivo", "300", "0", tool_context=context)
+    assert tools.close_ticket_with_debt(tool_context=context)["error"] == "no_open_ticket"
+
+
+def test_paying_it_off_later_clears_the_balance(working):
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+
+    part = tools.settle_client_debt("Carmen", "100", "efectivo", tool_context=context)
+    assert part["still_owes"] == "RD$200.00"
+    rest = tools.settle_client_debt("Carmen", "200", "banreservas", tool_context=context)
+    assert rest["still_owes"] == "RD$0.00"
+    assert "owed_from_before" not in tools.start_ticket("Carmen", tool_context=context)
+
+
+def test_more_than_she_owes_is_refused_rather_than_held(working):
+    """The salon has no way to hold money FOR a client, so an overpayment here would go missing."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+    answer = tools.settle_client_debt("Carmen", "500", "efectivo", tool_context=context)
+    assert answer["error"] == "more_than_owed" and answer["balance"] == "RD$300.00"
+
+
+def test_settling_for_somebody_who_owes_nothing_is_refused(working):
+    context, _ = working
+    assert tools.settle_client_debt("Nadie", "100", "efectivo", tool_context=context)["error"] == (
+        "unknown_client"
+    )

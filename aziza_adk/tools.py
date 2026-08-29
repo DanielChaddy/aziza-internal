@@ -31,7 +31,15 @@ logger = logging.getLogger("aziza_adk.tools")
 #: What the salon's hours gate: everything that writes a ticket or moves money. Reading is left
 #: open, so she can still look at her day after closing — see docs/PROJECT_DEFINITION.md §8.
 AFTER_HOURS_TOOL_NAMES = frozenset(
-    {"start_ticket", "add_service", "sell_product", "record_payment", "buy_product"}
+    {
+        "start_ticket",
+        "add_service",
+        "sell_product",
+        "record_payment",
+        "close_ticket_with_debt",
+        "settle_client_debt",
+        "buy_product",
+    }
 )
 
 #: Every tool needs a registered specialist behind it. `guards.before_tool_guard` refuses each of
@@ -45,6 +53,8 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "show_ticket",
         "void_ticket",
         "record_payment",
+        "close_ticket_with_debt",
+        "settle_client_debt",
         "buy_product",
         "settle_debt",
         "my_day",
@@ -103,6 +113,10 @@ LINES_NOT_OFFERED_MSG = (
 NOTHING_OWED_MSG = "No tienes nada pendiente con el salón."
 NOT_AN_OWNER_MSG = "Solo una dueña puede registrar el trabajo de otra especialista."
 AFTER_HOURS_MSG = "Fuera del horario del salón esto solo lo registra una dueña."
+BAD_EXTRA_MSG = "¿Ese excedente es propina o hay que darle el vuelto?"
+NOTHING_OWED_MSG = "Esa clienta no debe nada."
+NOTHING_OUTSTANDING_MSG = "Esa cuenta ya está saldada. No queda nada por cobrar."
+OVERPAID_DEBT_MSG = "Eso es más de lo que debe. Cóbrale {balance} y quedan en cero."
 NEED_SPECIALIST_MSG = "Dime cuál especialista lo hizo y lo registro a su nombre."
 UNKNOWN_SPECIALIST_MSG = "No tengo a esa especialista en el salón."
 AMBIGUOUS_SPECIALIST_MSG = "Hay más de una especialista con ese nombre. ¿Cuál de estas fue?"
@@ -113,27 +127,53 @@ WRONG_DISCIPLINE_MSG = "Ese servicio no es de tu área, así que no puedo cargar
 BAD_QUANTITY_MSG = f"La cantidad tiene que ser un número entre 1 y {MAX_QUANTITY}."
 EMPTY_TICKET_MSG = "La cuenta todavía no tiene servicios. Dime qué le hiciste primero."
 NOT_QUOTED_MSG = "Déjame mostrarte la cuenta con el total antes de cobrar."
-BAD_METHOD_MSG = "¿Pagó en efectivo, con tarjeta o por transferencia?"
+BAD_METHOD_MSG = "¿Pagó en efectivo, por Banreservas o por BHD?"
 BAD_AMOUNT_MSG = "No entendí el monto. Dímelo en números, por ejemplo 1500."
 OVERPAYMENT_MSG = (
     "Ese monto pasa de lo que falta por cobrar. Si la diferencia es propina, dímelo así."
 )
 BACKEND_DOWN_MSG = "No pude guardar eso ahora mismo. ¿Lo intentamos de nuevo en un momento?"
 
-#: What a specialist calls each way of paying. The keys are the canonical values the column and
-#: the tool argument carry.
+#: What a specialist calls each way of paying. The values are the salon's three accounts, and
+#: nothing outside them can be recorded — a payment nobody can attribute to an account is one the
+#: register cannot be reconciled against.
+#:
+#: Bare "transferencia" is deliberately absent: it names no account, and guessing which bank
+#: received the money is the same error as guessing a price.
 _METHODS = {
     "efectivo": "cash",
     "cash": "cash",
     "cheles": "cash",
-    "tarjeta": "card",
-    "card": "card",
-    "credito": "card",
-    "debito": "card",
-    "transferencia": "transfer",
-    "transfer": "transfer",
-    "transferencia bancaria": "transfer",
+    "banreservas": "banreservas",
+    "reservas": "banreservas",
+    "banco de reservas": "banreservas",
+    "bhd": "bhd",
+    "banco bhd": "bhd",
 }
+
+#: What she means by "keep it" or "give it back", when the amount handed over is more than the
+#: ticket. Empty falls through to the method — see `record_payment`.
+_EXTRA = {
+    "propina": "tip",
+    "tip": "tip",
+    "quedate con el vuelto": "tip",
+    "vuelto": "change",
+    "cambio": "change",
+    "change": "change",
+    "devolver": "change",
+}
+
+
+def _extra_for(extra: str, method: str) -> str | None:
+    """What to do with money handed over above the ticket: "tip", "change", or None to ask.
+
+    The default is the method's. Cash left her hand as notes and the difference is expected back;
+    a transfer is an exact instruction nobody sends by accident, so the difference was meant.
+    """
+    said = fold(extra or "").strip()
+    if not said:
+        return "change" if method == "cash" else "tip"
+    return _EXTRA.get(said)
 
 
 def now() -> dt.datetime:
@@ -339,10 +379,13 @@ def start_ticket(
                     "client_name": busy["client_name"],
                     "specialist": person.name,
                 }
+            client = queries.client_for(conn, name)
+            owing = queries.client_balance(conn, client["id"])
             sale = queries.create_sale(
                 conn,
                 person.specialist_id,
                 name,
+                client_id=client["id"],
                 client_gender=gender,
                 gender_source=source,
                 recorded_by=session.specialist_id(tool_context),
@@ -353,6 +396,9 @@ def start_ticket(
         "opened": True,
         "client_name": sale["client_name"],
         "priced_for": receipts.GENDER_LABELS[gender],
+        # Surfaced the moment she opens the ticket, which is the only time anybody is standing in
+        # front of the client who owes it.
+        **({"owed_from_before": money.rd(owing)} if owing > ZERO else {}),
         "worked_by": person.name,
     }
 
@@ -602,6 +648,7 @@ def record_payment(
     method: str,
     amount: str,
     tip: str = "0",
+    extra: str = "",
     on_behalf_of: str = "",
     tool_context: ToolContext = None,
 ) -> dict:
@@ -611,9 +658,12 @@ def record_payment(
     calls, and the ticket stays open until the two add up to the total.
 
     Args:
-        method: How they paid — cash, card or transfer, in the specialist's own words.
-        amount: What was handed over for the ticket, in numbers. Never includes the tip.
+        method: How they paid — efectivo, Banreservas or BHD, in the specialist's own words.
+        amount: What was handed over, in numbers. More than the ticket is allowed; see `extra`.
         tip: The tip on this payment, in numbers. "0" when there was none.
+        extra: ONLY when more was handed over than the ticket comes to, and only if she said
+            which: "propina" to keep it, "vuelto" to give it back. Leave empty and cash is given
+            back while a transfer is kept.
         on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
             work this is, in her own words. An ordinary specialist leaves it empty.
 
@@ -657,17 +707,25 @@ def record_payment(
             # specialist, so only a second entry point could race this into an overpayment.
             settled = sum((p.amount for p in queries.sale_payments(conn, sale["id"])), ZERO)
             remaining = owed - settled
-            if paid > remaining:
-                # Refused rather than absorbed: a payment above the balance is either a typo or a
-                # tip, and guessing which one writes the wrong commission either way.
-                return {
-                    "error": "overpayment",
-                    "message": OVERPAYMENT_MSG,
-                    "remaining": money.rd(remaining),
-                }
+            # Only what the TICKET can absorb is a payment. Anything above it left the client's
+            # hand but is not money the ticket received, so it never reaches `amount`.
+            applied = min(paid, remaining)
+            change = ZERO
+            if (excess := paid - applied) > ZERO:
+                choice = _extra_for(extra, canonical)
+                if choice is None:
+                    return {
+                        "error": "bad_extra",
+                        "message": BAD_EXTRA_MSG,
+                        "extra": money.rd(excess),
+                    }
+                if choice == "tip":
+                    gratuity += excess
+                else:
+                    change = excess
 
-            queries.add_payment(conn, sale["id"], canonical, paid, gratuity)
-            remaining -= paid
+            queries.add_payment(conn, sale["id"], canonical, applied, gratuity, change)
+            remaining -= applied
             if remaining > ZERO:
                 return {"paid": False, "remaining": money.rd(remaining)}
 
@@ -683,6 +741,139 @@ def record_payment(
                     product_lines=product_lines,
                     products_total=sale["products_total"],
                 ),
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def close_ticket_with_debt(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
+    """Close the open ticket with the client still owing the rest, so the next one can be opened.
+
+    Use this when she is leaving without paying it all. What is left is recorded against HER and
+    shown the next time somebody opens a ticket in her name — the ticket cannot simply stay open,
+    because one open ticket per specialist is what makes "my current ticket" mean anything.
+
+    Args:
+        on_behalf_of: ONLY for an owner, and then it is REQUIRED: the specialist whose work this
+            is, in her own words. Anyone else leaves it empty.
+
+    Returns:
+        {"owes": str, "receipt": str} — send "receipt" as it came — or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    try:
+        with queries.connect() as conn:
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            sale = queries.open_sale(conn, person.specialist_id)
+            if sale is None:
+                return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
+            lines = queries.sale_lines(conn, sale["id"])
+            product_lines = queries.sale_product_lines(conn, sale["id"])
+            if not lines and not product_lines:
+                return {"error": "empty_ticket", "message": EMPTY_TICKET_MSG}
+            owed = sale["services_total"] + sale["products_total"]
+            # The same gate a payment passes: a balance is money, and it is only ever recorded
+            # against a ticket she has actually been shown.
+            if not session.was_quoted(tool_context, sale["sale_ref"], owed):
+                return {"error": "not_quoted", "message": NOT_QUOTED_MSG}
+
+            payments = queries.sale_payments(conn, sale["id"])
+            outstanding = owed - sum((p.amount for p in payments), ZERO)
+            if outstanding <= ZERO:
+                return {"error": "nothing_outstanding", "message": NOTHING_OUTSTANDING_MSG}
+
+            queries.record_client_debt(
+                conn,
+                sale["client_id"],
+                sale["id"],
+                outstanding,
+                _today(),
+                recorded_by=session.specialist_id(tool_context),
+            )
+            queries.close_sale(conn, sale["id"], _today(), status="partial")
+            return {
+                "owes": money.rd(outstanding),
+                "receipt": receipts.render_receipt(
+                    sale["client_name"],
+                    lines,
+                    sale["services_total"],
+                    payments,
+                    product_lines=product_lines,
+                    products_total=sale["products_total"],
+                    outstanding=outstanding,
+                ),
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def settle_client_debt(
+    client: str,
+    amount: str,
+    method: str,
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Take money from a client against what she owed from a previous visit.
+
+    Not a ticket and not a sale: it pays down a balance, so it earns no commission and appears on
+    no receipt of work. Anyone may take it — the client is standing there.
+
+    Args:
+        client: Her name, as the specialist said it.
+        amount: What she handed over, in numbers.
+        method: efectivo, Banreservas or BHD, in the specialist's own words.
+        on_behalf_of: ONLY for an owner, and then it is REQUIRED.
+
+    Returns:
+        {"paid": str, "still_owes": str} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    canonical = _METHODS.get(fold(method or "").strip())
+    if canonical is None:
+        return {"error": "bad_method", "message": BAD_METHOD_MSG}
+    try:
+        paid = money.money(amount)
+    except ValueError:
+        return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+    if paid <= ZERO:
+        return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+
+    try:
+        with queries.connect() as conn:
+            _, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            found = queries.find_client(conn, client)
+            if found is None:
+                return {"error": "unknown_client", "message": NOTHING_OWED_MSG}
+            balance = queries.client_balance(conn, found["id"])
+            if balance <= ZERO:
+                return {"error": "nothing_owed", "message": NOTHING_OWED_MSG}
+            if paid > balance:
+                # Refused rather than turned into a credit: the salon has no way to hold money
+                # FOR a client, so an overpayment here would simply go missing.
+                return {
+                    "error": "more_than_owed",
+                    "message": OVERPAID_DEBT_MSG.format(balance=money.rd(balance)),
+                    "balance": money.rd(balance),
+                }
+            queries.record_client_payment(
+                conn,
+                found["id"],
+                paid,
+                _today(),
+                recorded_by=session.specialist_id(tool_context),
+                method=canonical,
+            )
+            return {
+                "paid": money.rd(paid),
+                "client": found["name"],
+                "still_owes": money.rd(balance - paid),
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)

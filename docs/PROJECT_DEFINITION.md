@@ -163,6 +163,29 @@ same day or carry it to pay-day, so `specialist_ledger` is a ledger of purchases
 the balance is their difference, never a stored number. A settled flag per purchase could not
 express a part payment, which is the ordinary case rather than the exception.
 
+**The salon takes cash, Banreservas and BHD, and a payment names which.** Bare "transferencia" is
+not a value: it says money arrived and not where, and a register that cannot attribute a figure
+cannot be reconciled against one. A client paying part in cash and part by transfer is two calls,
+and the ticket stays open until they add up.
+
+**A client can pay less, and then the ticket CLOSES.** One open ticket per specialist is what
+makes "my current ticket" mean anything, so a client who leaves owing would otherwise stop her
+serving anybody else. The sale closes `partial`, the balance goes to `client_ledger` against the
+person rather than the words on the ticket, and it is shown again the moment somebody opens a
+ticket in her name — which is the one moment anybody is standing in front of her. `clients` is
+matched on the folded name, so two people who share one share a balance until something asks for
+a phone; the column is there and the ambiguity is written down rather than discovered.
+
+**A client can pay more, and what happens then is decided by the method, not by the model.** Cash
+left her hand as notes and the difference is expected back, so it is change: recorded in
+`sale_payments.change_given`, which is neither a payment nor a tip, and the drawer is short by it.
+A transfer is an exact instruction nobody sends by accident, so the difference was meant and is a
+tip. Either default is overridden by what the specialist actually says, and an `extra` she words
+unrecognizably is asked about rather than guessed — she set the argument, so she meant something.
+
+`amount` is always what the TICKET received, never what was handed over. That is what keeps
+`SUM(amount)` equal to the total on a closed sale no matter how the change and the tips fell.
+
 What she made is commission + tips. The end-of-day message shows all four figures — services,
 commission with its rate beside it, tips, and the total — so the arithmetic can be checked by
 hand. A figure that appears from nowhere is the kind people dispute later. Products sold and the

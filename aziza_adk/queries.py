@@ -14,6 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import psycopg
+from conversation_core import fold
 from psycopg.rows import dict_row
 
 from aziza_adk import config
@@ -218,7 +219,7 @@ def open_sale(conn: psycopg.Connection, specialist_id: int) -> dict | None:
     """This specialist's open ticket, or None. At most one exists — see the partial index."""
     return fetchone(
         conn,
-        "SELECT id, sale_ref, client_name, client_gender, gender_source, "
+        "SELECT id, sale_ref, client_id, client_name, client_gender, gender_source, "
         "       services_total, products_total FROM sales "
         "WHERE specialist_id = %(sid)s AND status = 'open'",
         {"sid": specialist_id},
@@ -230,6 +231,7 @@ def create_sale(
     specialist_id: int,
     client_name: str,
     *,
+    client_id: int,
     client_gender: str,
     gender_source: str,
     recorded_by: int,
@@ -238,15 +240,16 @@ def create_sale(
     the index is the guarantee, and the tool's own check is only there to say it kindly."""
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO sales (sale_ref, specialist_id, recorded_by, client_name, "
+            "INSERT INTO sales (sale_ref, specialist_id, recorded_by, client_id, client_name, "
             "                   client_gender, gender_source) "
-            "VALUES (gen_random_uuid()::text, %(sid)s, %(by)s, %(name)s, %(gender)s, "
+            "VALUES (gen_random_uuid()::text, %(sid)s, %(by)s, %(cid)s, %(name)s, %(gender)s, "
             "        %(source)s) "
-            "RETURNING id, sale_ref, client_name, client_gender, gender_source, "
+            "RETURNING id, sale_ref, client_id, client_name, client_gender, gender_source, "
             "          services_total, products_total",
             {
                 "sid": specialist_id,
                 "by": recorded_by,
+                "cid": client_id,
                 "name": client_name,
                 "gender": client_gender,
                 "source": gender_source,
@@ -508,13 +511,24 @@ def void_sale(conn: psycopg.Connection, sale_id: int) -> None:
 
 
 def add_payment(
-    conn: psycopg.Connection, sale_id: int, method: str, amount: Decimal, tip: Decimal
+    conn: psycopg.Connection,
+    sale_id: int,
+    method: str,
+    amount: Decimal,
+    tip: Decimal,
+    change_given: Decimal = Decimal("0.00"),
 ) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO sale_payments (sale_id, method, amount, tip) "
-            "VALUES (%(sale)s, %(method)s, %(amount)s, %(tip)s)",
-            {"sale": sale_id, "method": method, "amount": amount, "tip": tip},
+            "INSERT INTO sale_payments (sale_id, method, amount, tip, change_given) "
+            "VALUES (%(sale)s, %(method)s, %(amount)s, %(tip)s, %(change)s)",
+            {
+                "sale": sale_id,
+                "method": method,
+                "amount": amount,
+                "tip": tip,
+                "change": change_given,
+            },
         )
     conn.commit()
 
@@ -522,23 +536,132 @@ def add_payment(
 def sale_payments(conn: psycopg.Connection, sale_id: int) -> list[Payment]:
     rows = fetchall(
         conn,
-        "SELECT method, amount, tip FROM sale_payments WHERE sale_id = %(sale)s ORDER BY id",
+        "SELECT method, amount, tip, change_given FROM sale_payments "
+        "WHERE sale_id = %(sale)s ORDER BY id",
         {"sale": sale_id},
     )
-    return [Payment(method=r["method"], amount=r["amount"], tip=r["tip"]) for r in rows]
+    return [
+        Payment(
+            method=r["method"], amount=r["amount"], tip=r["tip"], change_given=r["change_given"]
+        )
+        for r in rows
+    ]
 
 
-def close_sale(conn: psycopg.Connection, sale_id: int, business_date: dt.date) -> None:
-    """Mark the ticket paid and stamp the day it belongs to.
+def close_sale(
+    conn: psycopg.Connection, sale_id: int, business_date: dt.date, status: str = "paid"
+) -> None:
+    """Close the ticket and stamp the day it belongs to.
+
+    `status` is 'paid' or 'partial' — settled, or closed with a balance the client carries. Both
+    close it, because one open ticket per specialist is enforced by the index and a client who
+    leaves owing must not stop her serving anybody else.
 
     The date is passed in rather than taken from `now()`: a night that runs past midnight belongs
     to the day it started, and only the caller knows the salon's clock.
     """
+    if status not in ("paid", "partial"):
+        raise ValueError(f"not a closing status: {status!r}")
     with conn.cursor() as cur:
         cur.execute(
-            "UPDATE sales SET status = 'paid', paid_at = now(), business_date = %(day)s "
+            "UPDATE sales SET status = %(status)s, paid_at = now(), business_date = %(day)s "
             "WHERE id = %(sale)s AND status = 'open'",
-            {"sale": sale_id, "day": business_date},
+            {"sale": sale_id, "day": business_date, "status": status},
+        )
+    conn.commit()
+
+
+# --- who owes the salon -----------------------------------------------------
+
+
+def client_for(conn: psycopg.Connection, name: str) -> dict:
+    """The client that name refers to, created on her first visit.
+
+    Matched on the FOLDED name, so "MARÍA" and "maria" are one person rather than two balances.
+    Two different people who share a name share a row until something asks for a phone — the
+    schema says so where the column is.
+    """
+    key = fold(name)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO clients (client_ref, name, folded) "
+            "VALUES (gen_random_uuid()::text, %(name)s, %(key)s) "
+            "ON CONFLICT (folded) DO UPDATE SET name = clients.name "
+            "RETURNING id, client_ref, name, phone",
+            {"name": name.strip(), "key": key},
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def find_client(conn: psycopg.Connection, name: str) -> dict | None:
+    """The client that name refers to, or None. Never creates: settling a debt against a person
+    the salon has never seen would answer a typo with a new client rather than a question."""
+    return fetchone(
+        conn,
+        "SELECT id, client_ref, name, phone FROM clients WHERE folded = %(key)s",
+        {"key": fold(name)},
+    )
+
+
+def client_balance(conn: psycopg.Connection, client_id: int) -> Decimal:
+    """What she owes right now. Derived from the ledger, never stored."""
+    row = fetchone(
+        conn,
+        "SELECT COALESCE(SUM(CASE WHEN kind = 'debt' THEN amount ELSE -amount END), 0) "
+        "  AS balance FROM client_ledger WHERE client_id = %(cid)s",
+        {"cid": client_id},
+    )
+    return row["balance"] if row else Decimal("0.00")
+
+
+def record_client_debt(
+    conn: psycopg.Connection,
+    client_id: int,
+    sale_id: int,
+    amount: Decimal,
+    business_date: dt.date,
+    recorded_by: int,
+) -> None:
+    _client_ledger_row(conn, client_id, sale_id, "debt", amount, business_date, recorded_by, None)
+
+
+def record_client_payment(
+    conn: psycopg.Connection,
+    client_id: int,
+    amount: Decimal,
+    business_date: dt.date,
+    recorded_by: int,
+    method: str,
+) -> None:
+    _client_ledger_row(conn, client_id, None, "payment", amount, business_date, recorded_by, method)
+
+
+def _client_ledger_row(
+    conn: psycopg.Connection,
+    client_id: int,
+    sale_id: int | None,
+    kind: str,
+    amount: Decimal,
+    business_date: dt.date,
+    recorded_by: int,
+    method: str | None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO client_ledger (client_id, sale_id, kind, method, recorded_by, amount, "
+            "                           business_date) "
+            "VALUES (%(cid)s, %(sale)s, %(kind)s, %(method)s, %(by)s, %(amount)s, %(day)s)",
+            {
+                "cid": client_id,
+                "sale": sale_id,
+                "kind": kind,
+                "method": method,
+                "by": recorded_by,
+                "amount": amount,
+                "day": business_date,
+            },
         )
     conn.commit()
 

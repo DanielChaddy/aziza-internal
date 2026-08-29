@@ -69,10 +69,10 @@ def test_the_receipt_lists_every_payment_method_in_spanish():
         "Laura",
         [MANI, LEGS],
         TOTAL,
-        [Payment("cash", Decimal("2000.00")), Payment("card", Decimal("1800.00"))],
+        [Payment("cash", Decimal("2000.00")), Payment("bhd", Decimal("1800.00"))],
     )
     assert "Efectivo — RD$2,000.00" in out
-    assert "Tarjeta — RD$1,800.00" in out
+    assert "BHD — RD$1,800.00" in out
 
 
 def test_the_tip_is_its_own_line_and_never_inside_the_total():
@@ -93,7 +93,7 @@ def test_tips_across_split_payments_are_added_up_once():
         Decimal("800.00"),
         [
             Payment("cash", Decimal("400.00"), Decimal("100.00")),
-            Payment("card", Decimal("400.00"), Decimal("50.00")),
+            Payment("banreservas", Decimal("400.00"), Decimal("50.00")),
         ],
     )
     assert "Propina: RD$150.00" in out

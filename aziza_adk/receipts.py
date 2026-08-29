@@ -19,7 +19,7 @@ from aziza_adk.money import ZERO, rd
 
 #: How a payment method is said. The keys are the canonical values a column and a tool argument
 #: carry; only the values are Spanish.
-METHOD_LABELS = {"cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia"}
+METHOD_LABELS = {"cash": "Efectivo", "banreservas": "Banreservas", "bhd": "BHD"}
 
 #: How the ticket names which price column it read. Shown only when the ticket holds a service
 #: whose two prices differ — on an acrylic-only ticket the client makes no difference to any
@@ -64,6 +64,9 @@ class Payment:
     method: str
     amount: Decimal
     tip: Decimal = ZERO
+    #: Handed back out of the drawer. Neither a payment nor a tip — `amount` is what the ticket
+    #: received, and this is what left with the client.
+    change_given: Decimal = ZERO
 
 
 def spanish_date(day: dt.date) -> str:
@@ -114,10 +117,16 @@ def render_receipt(
     *,
     product_lines: Sequence[Line] = (),
     products_total: Decimal = ZERO,
+    outstanding: Decimal = ZERO,
 ) -> str:
-    """The closed sale. The tip is its own line and is never folded into the total: it is not
-    the salon's money and it is not part of what commission is taken on."""
+    """The closed sale.
+
+    Three figures sit BESIDE the total rather than inside it, and each for its own reason. A tip
+    is not the salon's money and is not what commission is taken on. Change was handed back out
+    of the drawer. What is still owed never arrived at all.
+    """
     tips = sum((p.tip for p in payments), ZERO)
+    change = sum((p.change_given for p in payments), ZERO)
     rows = [
         f"Cobrado — {client_name}",
         "",
@@ -134,6 +143,10 @@ def render_receipt(
     ]
     if tips > ZERO:
         rows.append(f"Propina: {rd(tips)}")
+    if change > ZERO:
+        rows.append(f"Vuelto: {rd(change)}")
+    if outstanding > ZERO:
+        rows += ["", f"QUEDA DEBIENDO: {rd(outstanding)}"]
     return "\n".join(rows)
 
 
