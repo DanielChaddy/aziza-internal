@@ -1,6 +1,10 @@
 -- Salón Aziza — business schema for database `aziza`.
 -- Mirrors docs/PROJECT_DEFINITION.md §6. Idempotent: safe to apply repeatedly.
 --
+-- This file states the shape it wants and carries no migration. While the project is IN
+-- DEVELOPMENT (CLAUDE.md) the databases are disposable, so a column that changed is reached
+-- by dropping and rebuilding rather than by altering in place.
+--
 -- The ADK session store lives in a SEPARATE database (`aziza_sessions`), created empty by
 -- db/init.sql and managed entirely by ADK (agent-platform docs/ADK_LESSONS_LEARNED.md §6a).
 -- Nothing here touches it.
@@ -216,18 +220,5 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     -- committed only once it has (scripts/daily_summary.py).
     UNIQUE (specialist_id, business_date)
 );
-
--- Bringing a database built before this file to the shape above. `CREATE TABLE IF NOT EXISTS`
--- never alters a table that already exists, so a column that changed is only ever reached from
--- here. Every statement is a no-op the second time.
---
--- `is_admin` became the `owner` role: a boolean could not say that Mariana is an owner AND does
--- wax, which is the whole of what the roles table adds. The seeder rewrites `specialist_roles`
--- from `staff_data.py` in the same run that applies this, so the column is not read again.
-ALTER TABLE specialists ALTER COLUMN telegram_user_id DROP NOT NULL;
-ALTER TABLE specialists DROP CONSTRAINT IF EXISTS specialists_telegram_not_blank;
-ALTER TABLE specialists ADD  CONSTRAINT specialists_telegram_not_blank
-    CHECK (telegram_user_id <> '');
-ALTER TABLE specialists DROP COLUMN IF EXISTS is_admin;
 
 COMMIT;

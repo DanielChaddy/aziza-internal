@@ -126,13 +126,16 @@ is owed none.
 ## Rebuilding after a schema change
 
 `db/schema.sql` only creates what is absent, so a changed column never reaches a built database.
-The rebuild is: check nothing real is there, drop, then upgrade with `dbBuild.enabled=true`.
+The rebuild is: drop, then upgrade with `dbBuild.enabled=true`.
+
+**While the project is in development this needs no permission** — the databases are disposable
+and `aziza` holds nobody's record of anything (see the repository `CLAUDE.md`). When that is
+lifted, a rebuild starts by refusing if anything real exists: `sales` is money billed and
+`specialist_ledger` is what a specialist owes, and neither can be reconstructed.
 
 ```bash
-# 1. REFUSE if anything real exists. sales is money billed and specialist_ledger is what a
-#    specialist owes; neither can be reconstructed, and both are empty only until somebody works.
-# 2. drop every table in `aziza` — `aziza_sessions` is ADK's and is left alone.
-# 3. helm upgrade --set dbBuild.enabled=true
+# 1. drop every table in `aziza` — `aziza_sessions` is ADK's and is left alone.
+# 2. helm upgrade --set dbBuild.enabled=true
 kubectl -n z-aziza delete pod aziza-0        # <- REQUIRED. Why, below.
 ```
 
