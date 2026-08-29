@@ -51,14 +51,21 @@ a price can arrive from the model, the salon's own figures stop being the ones o
 `specialists` before the Runner runs, and an unregistered sender never reaches the graph. The
 SENDER is never an argument, and that half has no exceptions.
 
-**Whose work it is can be an argument, and only for an admin.** `on_behalf_of` is the one
-parameter that can move a commission to a person the sender is not, so it is gated on
-`specialists.is_admin` in `guards.before_tool_guard` — off the row the edge resolved, where no
-wording in a turn reaches it — and re-checked in the tool body. An admin does no salon work, so
-naming is REQUIRED of her: omitting it is refused rather than booked to her, because a sale in the
-admin's name is a commission paid to the wrong person. The name resolves deterministically through
-`staff.py`, two people called Yamilé come back as two candidates, `sales.recorded_by` records who
-typed it, and the ticket says *Trabajo de* so she reads the attribution before the money moves.
+**Whose work it is can be an argument, and only for an owner.** `on_behalf_of` is the one
+parameter that can move a commission to a person the sender is not, so it is gated on the `owner`
+role in `guards.before_tool_guard` — off the row the edge resolved, where no wording in a turn
+reaches it — and re-checked in the tool body. Naming is REQUIRED of an owner who holds no
+discipline, because she has no work of her own for an unnamed entry to belong to and a sale in her
+name is a commission paid to the wrong person; an owner who does hold one is recording her own
+work when she names nobody. The name resolves deterministically through `staff.py`, two people
+called Yamilé come back as two candidates, `sales.recorded_by` records who typed it, and the
+ticket says *Trabajo de* so she reads the attribution before the money moves.
+
+**Roles and disciplines are separate, additive and both many-to-many.** A discipline is what she
+may record, a role is what she may do beyond her own work, and a person holds any mix of them.
+`staff_data.py` is the dataset for both. A Telegram id of `None` there is someone whose work the
+salon records and who cannot yet talk to the assistant — never the empty string, which the edge
+would match against a sender who supplied nothing.
 
 **Money is `Decimal` and `NUMERIC(12,2)`, everywhere, with no exceptions.** If you find yourself
 reaching for a float, or writing arithmetic into a prompt, the change is wrong.

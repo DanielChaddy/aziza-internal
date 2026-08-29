@@ -39,6 +39,12 @@ def main(argv: list[str] | None = None) -> int:
                     "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name",
                     row,
                 )
+            for row in staff_data.ROLES:
+                cur.execute(
+                    "INSERT INTO roles (code, name) VALUES (%(code)s, %(name)s) "
+                    "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name",
+                    row,
+                )
             for row in catalog_data.SERVICES:
                 cur.execute(
                     "INSERT INTO services "
@@ -67,15 +73,13 @@ def main(argv: list[str] | None = None) -> int:
             for person in people:
                 cur.execute(
                     "INSERT INTO specialists "
-                    "  (specialist_ref, telegram_user_id, full_name, is_admin) "
-                    "VALUES (%(specialist_ref)s, %(telegram_user_id)s, %(full_name)s, "
-                    "        %(is_admin)s) "
+                    "  (specialist_ref, telegram_user_id, full_name) "
+                    "VALUES (%(specialist_ref)s, %(telegram_user_id)s, %(full_name)s) "
                     "ON CONFLICT (specialist_ref) DO UPDATE SET "
                     "  telegram_user_id = EXCLUDED.telegram_user_id, "
-                    "  full_name = EXCLUDED.full_name, is_admin = EXCLUDED.is_admin, "
-                    "  active = TRUE "
+                    "  full_name = EXCLUDED.full_name, active = TRUE "
                     "RETURNING id",
-                    {**person, "is_admin": person.get("is_admin", False)},
+                    {**person, "telegram_user_id": person.get("telegram_user_id")},
                 )
                 specialist_id = cur.fetchone()["id"]
                 # Replaced wholesale rather than added to: a discipline removed from the dataset
@@ -89,6 +93,16 @@ def main(argv: list[str] | None = None) -> int:
                     cur.execute(
                         "INSERT INTO specialist_disciplines (specialist_id, discipline_id) "
                         "SELECT %(sid)s, d.id FROM disciplines d WHERE d.code = %(code)s",
+                        {"sid": specialist_id, "code": code},
+                    )
+                cur.execute(
+                    "DELETE FROM specialist_roles WHERE specialist_id = %(sid)s",
+                    {"sid": specialist_id},
+                )
+                for code in person.get("roles", ()):
+                    cur.execute(
+                        "INSERT INTO specialist_roles (specialist_id, role_id) "
+                        "SELECT %(sid)s, r.id FROM roles r WHERE r.code = %(code)s",
                         {"sid": specialist_id, "code": code},
                     )
         # The dataset is the source of truth for who may talk to this assistant, and for what the

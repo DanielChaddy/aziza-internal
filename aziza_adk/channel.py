@@ -71,7 +71,7 @@ def _state_for(who: dict) -> dict:
         "specialist_ref": who["specialist_ref"],
         "full_name": who["full_name"],
         "disciplines": list(who["disciplines"]),
-        "is_admin": bool(who.get("is_admin")),
+        "roles": list(who.get("roles") or ()),
     }
 
 

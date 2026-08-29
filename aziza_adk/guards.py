@@ -61,16 +61,16 @@ def before_tool_guard(tool: Any, args: dict, tool_context: Any) -> dict | None:
     are here rather than in a query.
 
     `on_behalf_of` is the one argument that can move money to a person the sender is not. It is
-    refused here, off the row the edge resolved, so no wording in a turn can reach it — the prompt
-    is advisory and this is not.
+    refused here, off the role the edge resolved, so no wording in a turn can reach it — the
+    prompt is advisory and this is not.
     """
     name = getattr(tool, "name", "") or getattr(tool, "__name__", "")
     if name not in tools.SPECIALIST_TOOL_NAMES:
         return None
     if not session.specialist_id(tool_context):
         return _blocked("not_registered", tools.NOT_REGISTERED_MSG, name)
-    if str((args or {}).get("on_behalf_of") or "").strip() and not session.is_admin(tool_context):
-        return _blocked("not_an_admin", tools.NOT_AN_ADMIN_MSG, name)
+    if str((args or {}).get("on_behalf_of") or "").strip() and not session.is_owner(tool_context):
+        return _blocked("not_an_owner", tools.NOT_AN_OWNER_MSG, name)
     return None
 
 

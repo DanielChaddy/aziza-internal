@@ -7,9 +7,9 @@ the client across one or more payment methods, and at the end of the day receive
 
 **The users are the salon's staff, not its clients.** No client ever talks to this assistant.
 
-The administration uses the same assistant and the same tools, naming the specialist each entry
-belongs to. That name is required of her rather than defaulted, because she does no salon work and
-a sale in her name would be a commission paid to the wrong person.
+An owner uses the same assistant and the same tools, naming the specialist an entry belongs to
+when it is not her own. That name is required of an owner who does no salon work rather than
+defaulted, because a sale in her name would be a commission paid to the wrong person.
 
 Architecture at a glance:
 
@@ -21,8 +21,8 @@ Architecture at a glance:
   booked to, and a confirm-first gate that refuses to charge a total the specialist has not been
   shown.
 - **One argument that can move a commission** (`on_behalf_of`), gated on a column rather than on
-  wording: refused for anyone the database does not call an admin, required of anyone it does, and
-  recorded in `sales.recorded_by` alongside whose work it was.
+  wording: refused for anyone the database does not give the `owner` role, required of an owner
+  who holds no discipline, and recorded in `sales.recorded_by` alongside whose work it was.
 - **A price that is never a model output** (`aziza_adk/catalog.py`): what she said is resolved
   against the salon's catalog, and the price is read off the row. Which of the row's two prices
   is decided by a table of names (`names.py`), never by the model — and the ticket says when it
@@ -101,7 +101,7 @@ service that is not configured yet.
 9. **A voice note.** Say the same thing out loud — it takes the same path a typed message does.
 10. **Her own tab.** *"Me tomé un agua"* → RD$15.00 charged to her, not to a client.
 11. **The day.** *"¿Cómo voy hoy?"* → services, commission, tips, products sold, and what she owes.
-12. **The administration.** As the administrator: *"Le hice manicura normal a Laura"* → asked
+12. **An owner.** As an owner who does no salon work: *"Le hice manicura normal a Laura"* → asked
     whose work it was, never booked to her. *"Yamilé le hizo manicura normal a Laura"* → the
     ticket, with *Trabajo de: Yamilé Reyes* on it, and the commission on Yamilé's day.
 

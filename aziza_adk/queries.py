@@ -67,12 +67,16 @@ def specialist_by_telegram_id(conn: psycopg.Connection, telegram_user_id: str) -
     return fetchone(
         conn,
         """
-        SELECT s.id, s.specialist_ref, s.full_name, s.is_admin,
-               COALESCE(ARRAY_AGG(d.code ORDER BY d.code)
-                        FILTER (WHERE d.code IS NOT NULL), '{}'::text[]) AS disciplines
+        SELECT s.id, s.specialist_ref, s.full_name,
+               COALESCE(ARRAY_AGG(DISTINCT d.code)
+                        FILTER (WHERE d.code IS NOT NULL), '{}'::text[]) AS disciplines,
+               COALESCE(ARRAY_AGG(DISTINCT r.code)
+                        FILTER (WHERE r.code IS NOT NULL), '{}'::text[]) AS roles
         FROM specialists s
         LEFT JOIN specialist_disciplines sd ON sd.specialist_id = s.id
         LEFT JOIN disciplines d             ON d.id = sd.discipline_id
+        LEFT JOIN specialist_roles sr       ON sr.specialist_id = s.id
+        LEFT JOIN roles r                   ON r.id = sr.role_id
         WHERE s.telegram_user_id = %(tg)s AND s.active
         GROUP BY s.id
         """,
@@ -127,9 +131,13 @@ def retire_absent(
 def working_specialists(conn: psycopg.Connection) -> list[dict]:
     """Everyone whose work can be recorded, with the disciplines each holds.
 
-    Admins are excluded: an admin does no salon work, so naming one as having done a service is
-    not a thing to resolve to. The list is what an admin's spoken name is matched against, the
-    same way a spoken service is matched against the catalog.
+    Holding a discipline is the whole test, and it is why an owner who also does salon work
+    appears here while one who does none does not — naming somebody with nothing to record is not
+    a thing to resolve to. The list is what a spoken name is matched against, the same way a
+    spoken service is matched against the catalog.
+
+    Someone with no Telegram id is included: the salon records her work, she simply cannot enter
+    it herself.
     """
     return fetchall(
         conn,
@@ -138,9 +146,9 @@ def working_specialists(conn: psycopg.Connection) -> list[dict]:
                COALESCE(ARRAY_AGG(d.code ORDER BY d.code)
                         FILTER (WHERE d.code IS NOT NULL), '{}'::text[]) AS disciplines
         FROM specialists s
-        LEFT JOIN specialist_disciplines sd ON sd.specialist_id = s.id
-        LEFT JOIN disciplines d             ON d.id = sd.discipline_id
-        WHERE s.active AND NOT s.is_admin
+        JOIN specialist_disciplines sd ON sd.specialist_id = s.id
+        JOIN disciplines d             ON d.id = sd.discipline_id
+        WHERE s.active
         GROUP BY s.id
         ORDER BY s.full_name
         """,

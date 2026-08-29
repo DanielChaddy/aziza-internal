@@ -21,15 +21,32 @@ CREATE TABLE IF NOT EXISTS specialists (
     specialist_ref   TEXT NOT NULL UNIQUE,
     -- THE CREDENTIAL. A sale carries a commission, so who did the work is never a value the
     -- sender types — it is this, matched at the edge before the model runs (§3).
-    telegram_user_id TEXT NOT NULL UNIQUE,
+    --
+    -- NULL is someone the salon records work for who cannot yet talk to the assistant. Never the
+    -- empty string: the edge matches by equality, so a blank column would admit a blank sender.
+    telegram_user_id TEXT UNIQUE
+                     CONSTRAINT specialists_telegram_not_blank CHECK (telegram_user_id <> ''),
     full_name        TEXT NOT NULL,
-    -- May record work against ANOTHER specialist. The one authorization the sender's own identity
-    -- does not settle, so it is read from this column and never from anything a model can say
-    -- (§3). An admin does no salon work herself and earns nothing: she names whose work it is on
-    -- every entry, and omitting the name is refused rather than booked to her.
-    is_admin         BOOLEAN NOT NULL DEFAULT FALSE,
     active           BOOLEAN NOT NULL DEFAULT TRUE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- What a person may DO, as against what she is trained to do. Additive and many-to-many for the
+-- same reason disciplines are: an owner who also does wax holds both and is not a third kind of
+-- person (§3).
+--
+-- `owner` is the one that widens authorization — it carries naming another specialist's work,
+-- closing the register, reading the salon's figures, and recording outside opening hours.
+CREATE TABLE IF NOT EXISTS roles (
+    id   SERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS specialist_roles (
+    specialist_id INTEGER NOT NULL REFERENCES specialists (id) ON DELETE CASCADE,
+    role_id       INTEGER NOT NULL REFERENCES roles (id)       ON DELETE CASCADE,
+    PRIMARY KEY (specialist_id, role_id)
 );
 
 -- Many-to-many, because someone who does both wax and nails holds both and is not a third
@@ -64,7 +81,7 @@ CREATE TABLE IF NOT EXISTS sales (
     sale_ref       TEXT NOT NULL UNIQUE,
     -- WHOSE WORK IT IS, and therefore who the commission belongs to.
     specialist_id  INTEGER NOT NULL REFERENCES specialists (id),
-    -- WHO TYPED IT. Equal to specialist_id when she recorded her own; an admin otherwise. Always
+    -- WHO TYPED IT. Equal to specialist_id when she recorded her own; an owner otherwise. Always
     -- set, never NULL: a magic absence would make "she entered it" and "we lost track" the same
     -- row, and this is the audit trail for money paid to a person (§3).
     recorded_by    INTEGER NOT NULL REFERENCES specialists (id),
@@ -97,7 +114,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_sales_one_open_per_specialist
 
 CREATE INDEX IF NOT EXISTS ix_sales_specialist_date ON sales (specialist_id, business_date);
 
--- What an admin entered, which is the question an audit asks.
+-- What one person entered against another's name, which is the question an audit asks.
 CREATE INDEX IF NOT EXISTS ix_sales_recorded_by ON sales (recorded_by)
     WHERE recorded_by <> specialist_id;
 
@@ -199,5 +216,18 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     -- committed only once it has (scripts/daily_summary.py).
     UNIQUE (specialist_id, business_date)
 );
+
+-- Bringing a database built before this file to the shape above. `CREATE TABLE IF NOT EXISTS`
+-- never alters a table that already exists, so a column that changed is only ever reached from
+-- here. Every statement is a no-op the second time.
+--
+-- `is_admin` became the `owner` role: a boolean could not say that Mariana is an owner AND does
+-- wax, which is the whole of what the roles table adds. The seeder rewrites `specialist_roles`
+-- from `staff_data.py` in the same run that applies this, so the column is not read again.
+ALTER TABLE specialists ALTER COLUMN telegram_user_id DROP NOT NULL;
+ALTER TABLE specialists DROP CONSTRAINT IF EXISTS specialists_telegram_not_blank;
+ALTER TABLE specialists ADD  CONSTRAINT specialists_telegram_not_blank
+    CHECK (telegram_user_id <> '');
+ALTER TABLE specialists DROP COLUMN IF EXISTS is_admin;
 
 COMMIT;

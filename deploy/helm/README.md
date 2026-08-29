@@ -120,8 +120,8 @@ seed deactivates every product and service whose ref `catalog_data.py` no longer
 of leaving the dropped row sellable and still listed in the prompt.
 
 `summary.sendMode` is `live`: the seed registers real people with real Telegram ids, so a
-specialist who billed that day receives her end-of-day message. The administrator does no salon
-work and is owed none.
+specialist who billed that day receives her end-of-day message. An owner who does no salon work
+is owed none.
 
 ## Rebuilding after a schema change
 
