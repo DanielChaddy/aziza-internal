@@ -30,7 +30,7 @@ LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
         lambda c: tools.set_client_gender("hombre", tool_context=c),
         lambda c: tools.sell_product("agua", 1, tool_context=c),
         lambda c: tools.buy_product("agua", 1, tool_context=c),
-        lambda c: tools.settle_debt("25", tool_context=c),
+        lambda c: tools.settle_debt("25", "productos", "efectivo", tool_context=c),
         lambda c: tools.my_day(tool_context=c),
     ],
 )
@@ -466,15 +466,20 @@ def test_part_of_a_debt_can_be_paid_and_the_rest_carried(working):
     """A settled flag per purchase could not express this, which is why it is a ledger."""
     context, _ = working
     tools.buy_product("presidente", 1, tool_context=context)  # RD$125.00 at her price
-    assert tools.settle_debt("50", tool_context=context)["balance"] == "RD$75.00"
-    assert tools.settle_debt("75", tool_context=context)["balance"] == "RD$0.00"
-    assert tools.settle_debt("10", tool_context=context)["error"] == "nothing_owed"
+
+    def pay(amount: str) -> dict:
+        return tools.settle_debt(amount, "productos", "efectivo", tool_context=context)
+
+    assert pay("50")["balance"] == "RD$75.00"
+    assert pay("75")["balance"] == "RD$0.00"
+    assert pay("10")["error"] == "nothing_owed"
 
 
 def test_paying_more_than_is_owed_is_refused(working):
     context, _ = working
     tools.buy_product("agua", 1, tool_context=context)
-    assert tools.settle_debt("100", tool_context=context)["error"] == "more_than_owed"
+    answer = tools.settle_debt("100", "productos", "efectivo", tool_context=context)
+    assert answer["error"] == "more_than_owed"
 
 
 def test_what_she_owes_shows_on_her_day(working):
@@ -514,7 +519,7 @@ def test_an_ordinary_specialist_cannot_name_anyone_else(working):
         lambda c: tools.void_ticket(tool_context=c),
         lambda c: tools.record_payment("efectivo", "300", "0", tool_context=c),
         lambda c: tools.buy_product("agua", 1, tool_context=c),
-        lambda c: tools.settle_debt("15", tool_context=c),
+        lambda c: tools.settle_debt("15", "productos", "efectivo", tool_context=c),
         lambda c: tools.my_day(tool_context=c),
     ],
 )
@@ -733,3 +738,120 @@ def test_settling_for_somebody_who_owes_nothing_is_refused(working):
     assert tools.settle_client_debt("Nadie", "100", "efectivo", tool_context=context)["error"] == (
         "unknown_client"
     )
+
+
+# --- [11] The register, and money lent out of it -------------------------------------------------
+
+
+def test_what_the_register_should_hold_is_every_way_money_moved(owner, working, conn):
+    """The load-bearing arithmetic. A ticket paid, a tip left in the drawer, an old debt settled
+    into a bank, and cash lent out — each moves a different account in a different direction."""
+    context, her = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "300", "50", tool_context=context)
+
+    tools.start_ticket("Carmen", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.settle_client_debt("Carmen", "100", "banreservas", tool_context=context)
+
+    tools.record_loan(her["full_name"], "200", "efectivo", tool_context=owner)
+
+    expected = queries.expected_register(conn, tools._today())
+    # 300 taken + 50 tipped - 200 lent = 150 in the drawer; the 100 went to Banreservas.
+    assert expected["cash"] == Decimal("150.00")
+    assert expected["banreservas"] == Decimal("100.00")
+    assert expected["bhd"] == Decimal("0.00")
+
+
+def test_the_change_is_not_subtracted_twice(owner, working, conn):
+    """`amount` is what the ticket received, so a note and its change already net there. A reader
+    who also subtracted `change_given` would count it twice."""
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "500", "0", tool_context=context)  # RD$200 back
+    assert queries.expected_register(conn, tools._today())["cash"] == Decimal("300.00")
+
+
+def test_closing_the_register_records_both_figures_and_neither_difference(owner, working, conn):
+    context, _ = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "300", "0", tool_context=context)
+
+    answer = tools.close_register("290", "0", "0", tool_context=owner)
+    assert answer["closed"] is True
+    assert answer["expected"]["cash"] == "RD$300.00"
+    assert answer["counted"]["cash"] == "RD$290.00"
+    assert answer["variance"]["cash"] == "-RD$10.00"
+    row = queries.fetchone(conn, "SELECT * FROM register_closes ORDER BY id DESC LIMIT 1")
+    assert (row["counted_cash"], row["expected_cash"]) == (Decimal("290.00"), Decimal("300.00"))
+
+
+def test_an_open_ticket_stops_the_register_being_closed(owner, working):
+    """Money not yet taken would be measured against an expectation that is not finished."""
+    context, her = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    answer = tools.close_register("0", "0", "0", tool_context=owner)
+    assert answer["error"] == "tickets_open"
+    assert answer["open"] == [f"{her['full_name']} — Laura"]
+
+
+def test_the_register_closes_once(owner):
+    assert tools.close_register("0", "0", "0", tool_context=owner)["closed"] is True
+    assert tools.close_register("0", "0", "0", tool_context=owner)["error"] == "already_closed"
+
+
+def test_the_close_says_what_to_hand_out_in_tips(owner, working):
+    """Tips sit in the drawer that was just counted and are paid out of it, so they are reported
+    beside the close rather than taken off it."""
+    context, her = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "300", "80", tool_context=context)
+    answer = tools.close_register("380", "0", "0", tool_context=owner)
+    assert answer["tips_to_pay"] == [f"{her['full_name']} — RD$80.00"]
+    assert answer["variance"]["cash"] == "RD$0.00"
+
+
+def test_a_loan_and_a_purchase_are_owed_separately(owner, working, conn):
+    """Owing for a drink and owing cash are not the same thing to be told you owe."""
+    context, her = working
+    tools.buy_product("agua", tool_context=context)
+    tools.record_loan(her["full_name"], "500", "efectivo", tool_context=owner)
+
+    balances = queries.debt_balances(conn, her["id"])
+    assert balances == {
+        "purchase": Decimal("15.00"),
+        "loan": Decimal("500.00"),
+        "total": Decimal("515.00"),
+    }
+
+
+def test_paying_one_balance_leaves_the_other_alone(owner, working, conn):
+    context, her = working
+    tools.buy_product("agua", tool_context=context)
+    tools.record_loan(her["full_name"], "500", "efectivo", tool_context=owner)
+    tools.settle_debt("500", "préstamo", "efectivo", tool_context=context)
+
+    balances = queries.debt_balances(conn, her["id"])
+    assert balances["loan"] == Decimal("0.00")
+    assert balances["purchase"] == Decimal("15.00"), "the water is still owed"
+
+
+def test_a_payment_must_say_which_balance_it_pays(working):
+    context, _ = working
+    tools.buy_product("agua", tool_context=context)
+    assert tools.settle_debt("15", "lo que sea", "efectivo", tool_context=context)["error"] == (
+        "bad_owes"
+    )
+
+
+def test_only_an_owner_reaches_the_register(working):
+    """The tool body refuses even though the guard already did."""
+    context, _ = working
+    assert tools.close_register("0", "0", "0", tool_context=context)["error"] == "owner_only"
+    assert tools.salon_day(tool_context=context)["error"] == "owner_only"

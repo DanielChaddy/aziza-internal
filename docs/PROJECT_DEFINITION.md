@@ -168,6 +168,28 @@ not a value: it says money arrived and not where, and a register that cannot att
 cannot be reconciled against one. A client paying part in cash and part by transfer is two calls,
 and the ticket stays open until they add up.
 
+**What she takes is two things, and she is told them apart.** A product off the shelf is a
+`purchase`; money out of the register is a `loan`. Both are debits in `specialist_ledger` and both
+are hers to settle, but owing for a drink and owing cash do not feel the same to be told you owe,
+so `settles` says which of the two a payment pays down. Without it the two could only be reported
+gross, and a part payment would belong to both. Lending is an owner's — `record_loan` — because
+it empties the register.
+
+**The register is closed once a day, by an owner, and both figures are kept.** `close_register`
+records what each account holds and what the day's entries say it should, and stores them both:
+recomputing the expectation later would quietly absorb anything entered afterwards, which is the
+one thing a reconciliation exists to catch. The difference is derived and never stored.
+
+Expected is `amount + tip` on the day's payments, plus client settlements, plus what specialists
+paid back, minus what was lent. **Change is not subtracted** — `amount` is what the ticket
+received, so a note and its change already net there, and `change_given` is reported rather than
+summed. Cash tips are in the drawer until they are handed over at the end of the day, so the close
+names what to pay out rather than deducting it.
+
+**A ticket still open refuses the close**, and the refusal names whose it is: money not yet taken
+would be measured against an expectation that is not finished, and a variance nobody can explain
+teaches people to ignore variances.
+
 **A client can pay less, and then the ticket CLOSES.** One open ticket per specialist is what
 makes "my current ticket" mean anything, so a client who leaves owing would otherwise stop her
 serving anybody else. The sale closes `partial`, the balance goes to `client_ledger` against the

@@ -91,6 +91,12 @@ def sentinel(conn):
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
                 {"prefix": SENTINEL_REF + "%"},
             )
+            # `business_date` is UNIQUE here, so a leftover row would also make the second test
+            # that closes a register fail as "already closed" rather than on its own merits.
+            cur.execute(
+                f"DELETE FROM register_closes WHERE closed_by IN {sentinels}",
+                {"prefix": SENTINEL_REF + "%"},
+            )
             cur.execute(
                 "DELETE FROM specialists WHERE specialist_ref LIKE %(prefix)s",
                 {"prefix": SENTINEL_REF + "%"},

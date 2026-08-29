@@ -97,6 +97,7 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | the invented specialists | `demo_data.py`, seeded only behind `--with-demo-specialists` |
 | which specialist a spoken name means | `staff.py`, and `tests/test_staff.py` |
 | what a client owes, and change | `queries.client_*`, `tools.record_payment`, §7 |
+| the register, and what it should hold | `queries.expected_register`, `tools.close_register`, §7 |
 | which price column a client reads | `names.py`, and `tests/test_names.py` |
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 

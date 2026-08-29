@@ -91,7 +91,7 @@ def test_no_tool_runs_for_a_session_with_no_specialist(ctx, name):
     assert blocked["blocked_by_guard"] is True and blocked["error"] == "not_registered"
 
 
-@pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES))
+@pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES - tools.OWNER_TOOL_NAMES))
 def test_a_registered_specialist_is_allowed_through(ctx, name):
     who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"]}
     assert guards.before_tool_guard(_tool(name), {}, ctx(who)) is None
@@ -190,7 +190,10 @@ def test_an_owner_records_whenever_she_likes(ctx, clock, name):
     assert guards.before_tool_guard(_tool(name), {}, ctx(_OWNER)) is None
 
 
-@pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES - tools.AFTER_HOURS_TOOL_NAMES))
+@pytest.mark.parametrize(
+    "name",
+    sorted(tools.SPECIALIST_TOOL_NAMES - tools.AFTER_HOURS_TOOL_NAMES - tools.OWNER_TOOL_NAMES),
+)
 def test_reading_stays_open_after_closing(ctx, clock, name):
     """She can still see her day at midnight. Only writing a ticket or moving money is gated."""
     clock(_at(_TUE, 23, 0))
@@ -201,3 +204,19 @@ def test_the_refusal_says_which_it_was(ctx, clock):
     clock(_at(_SUN, 12, 0))
     blocked = guards.before_tool_guard(_tool("record_payment"), {}, ctx(_SPECIALIST))
     assert blocked["blocked_by_guard"] is True and blocked["error"] == "after_hours"
+
+
+# --- [5] What only an owner may do --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(tools.OWNER_TOOL_NAMES))
+def test_the_register_and_the_salons_figures_are_an_owners(ctx, name):
+    """Closing the register, lending from it and reading the salon's takings are not a
+    specialist's to do, at any hour."""
+    blocked = guards.before_tool_guard(_tool(name), {}, ctx(_SPECIALIST))
+    assert blocked["blocked_by_guard"] is True and blocked["error"] == "owner_only"
+
+
+@pytest.mark.parametrize("name", sorted(tools.OWNER_TOOL_NAMES))
+def test_an_owner_reaches_them(ctx, name):
+    assert guards.before_tool_guard(_tool(name), {}, ctx(_OWNER)) is None
