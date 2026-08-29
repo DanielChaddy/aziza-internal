@@ -25,7 +25,7 @@ import logging
 from typing import Any
 
 from agent_adk import latest_user_text, text_response
-from conversation_core import fold
+from conversation_core import screens
 
 from aziza_adk import session, tools
 
@@ -33,27 +33,6 @@ logger = logging.getLogger("aziza_adk.guards")
 
 INJECTION_MSG = (
     "Con eso no puedo ayudarte. ¿Abrimos una cuenta, le agregamos un servicio, o cobramos?"
-)
-
-#: Accent-folded, because a screen a specialist evades by typing without accents is not a screen.
-#: Specific phrases rather than single words: "sistema" and "instrucciones" are ordinary Spanish
-#: in a salon conversation, and a screen that fires on an ordinary turn gets switched off.
-_INJECTION_PHRASES: tuple[str, ...] = (
-    "ignora tus instrucciones",
-    "ignora las instrucciones",
-    "olvida tus instrucciones",
-    "ignore your instructions",
-    "ignore previous instructions",
-    "system prompt",
-    "prompt del sistema",
-    "revela tus instrucciones",
-    "muestra tus instrucciones",
-    "cual es tu prompt",
-    "developer mode",
-    "modo desarrollador",
-    "jailbreak",
-    "actua como si no tuvieras",
-    "sin restricciones",
 )
 
 
@@ -67,8 +46,8 @@ def before_model_safety(callback_context: Any, llm_request: Any) -> Any:
     text = latest_user_text(llm_request)
     if not text:
         return None
-    if any(phrase in fold(text) for phrase in _INJECTION_PHRASES):
-        logger.info("input screen: injection attempt")
+    if phrase := screens.injection_phrase(text):
+        logger.info("input screen: injection attempt (%s)", phrase)
         return text_response(INJECTION_MSG)
     return None
 

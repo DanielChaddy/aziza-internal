@@ -1,16 +1,21 @@
 """Money: how it is held, how it is rounded, and how it is written.
 
-Stdlib only, and that is load-bearing rather than tidy — a commission is what a person is paid,
-so the arithmetic behind it is held by an assertion that reaches neither a model nor a database
-or it is not held at all. See docs/PROJECT_DEFINITION.md §6.
+Stdlib and `conversation_core`, which is itself stdlib — and that is load-bearing rather than tidy:
+a commission is what a person is paid, so the arithmetic behind it is held by an assertion that
+reaches neither a model nor a database or it is not held at all. See docs/PROJECT_DEFINITION.md §6.
 
 Decimal throughout. A float cannot hold RD$1,500.10 exactly, and a cent lost per sale is a
 discrepancy nobody can reconstruct at the end of the month.
+
+What is this salon's and stays here: the rate, when it is taken, and that a figure is quoted in
+pesos. How a figure is written is `conversation_core.money`'s.
 """
 
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+
+from conversation_core import money as shared_money
 
 CENTS = Decimal("0.01")
 ZERO = Decimal("0.00")
@@ -41,5 +46,9 @@ def commission(subtotal: Decimal, pct: int) -> Decimal:
 
 
 def rd(amount: Decimal) -> str:
-    """An amount as the salon writes it: RD$1,500.00."""
-    return f"RD${amount:,.2f}"
+    """An amount as the salon writes it: RD$1,500.00.
+
+    The formatting is `conversation_core.money`'s. What stays here is the name, because every call
+    site in this repository quotes pesos and none of them chooses a currency.
+    """
+    return shared_money.money(amount, "DOP")
