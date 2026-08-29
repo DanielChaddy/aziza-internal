@@ -1,12 +1,19 @@
 {{- if .Values.summary.enabled }}
+{{- range $i, $schedule := .Values.summary.schedules }}
+{{- with $ }}
+{{- if $i }}
+---
+{{- end }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "aziza.fullname" . }}-summary
+  # One per closing time, because the salon closes at two of them. A single nightly cron would
+  # either fire an hour after Saturday closes or an hour before the rest of the week does.
+  name: {{ include "aziza.fullname" . }}-summary-{{ $i }}
   labels:
     {{- include "aziza.labels" . | nindent 4 }}
 spec:
-  schedule: {{ .Values.summary.schedule | quote }}
+  schedule: {{ $schedule | quote }}
   # Declared rather than converted: the schedule is written in the salon's own hours, and a UTC
   # cron would move the end of the day by one hour twice a year for no reason anyone remembers.
   timeZone: {{ .Values.config.TIMEZONE | quote }}
@@ -76,4 +83,6 @@ spec:
               emptyDir: {}
             - name: home
               emptyDir: {}
+{{- end }}
+{{- end }}
 {{- end }}

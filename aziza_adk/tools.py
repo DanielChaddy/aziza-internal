@@ -23,7 +23,17 @@ from zoneinfo import ZoneInfo
 from conversation_core import fold
 from google.adk.tools import ToolContext
 
-from aziza_adk import catalog, config, money, names, queries, receipts, session, staff
+from aziza_adk import (
+    catalog,
+    config,
+    money,
+    names,
+    pay,
+    queries,
+    receipts,
+    session,
+    staff,
+)
 from aziza_adk.money import ZERO
 
 logger = logging.getLogger("aziza_adk.tools")
@@ -1226,41 +1236,48 @@ def my_day(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
             person, refused = _acting(conn, tool_context, on_behalf_of)
             if refused is not None:
                 return refused
-            totals = queries.day_totals(conn, person.specialist_id, day)
+            totals = day_figures(conn, person.specialist_id, day)
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
+    return {"summary": summary_text(person.name, day, totals)}
+
+
+def day_figures(conn, specialist_id: int, day: dt.date) -> dict:
+    """One day's totals, plus what has accrued toward the next pay-day.
+
+    One function rather than two callers assembling the same dict: `my_day` and the end-of-day
+    job must not be able to disagree about a day, and the pay-period half is the easiest half to
+    assemble differently.
+    """
+    start, end = pay.period_for(day)
+    accrued = queries.period_services(conn, specialist_id, start, end)
     return {
-        "summary": summary_text(
-            person.name,
-            day,
-            totals["services_total"],
-            totals["tips"],
-            totals["products_total"],
-            totals["debt_balance"],
-        )
+        **queries.day_totals(conn, specialist_id, day),
+        "period_commission": money.commission(accrued, config.COMMISSION_PCT),
+        "payday": pay.payday_for(end),
     }
 
 
-def summary_text(
-    full_name: str,
-    day: dt.date,
-    services_total: Decimal,
-    tips: Decimal,
-    products_total: Decimal = ZERO,
-    debt_balance: Decimal = ZERO,
-) -> str:
+def summary_text(full_name: str, day: dt.date, totals: dict) -> str:
     """One day's figures as the specialist reads them.
 
-    Here rather than in `receipts` because the commission rate is configuration, and here rather
-    than in each caller because `my_day` and the end-of-day job must not be able to disagree.
+    Takes the whole `day_totals` row rather than six positional amounts: the two callers must not
+    be able to disagree, and six figures in an order is exactly how they would.
+
+    Here rather than in `receipts` because the commission rate and the pay calendar are this
+    application's, and `receipts` renders what it is handed.
     """
+    services_total = totals["services_total"]
     return receipts.render_day(
         full_name.split()[0] if full_name else "",
         day,
         services_total=services_total,
         commission_pct=config.COMMISSION_PCT,
         commission=money.commission(services_total, config.COMMISSION_PCT),
-        tips=tips,
-        products_total=products_total,
-        debt_balance=debt_balance,
+        tips=totals["tips"],
+        products_total=totals["products_total"],
+        owed_products=totals["owed_products"],
+        owed_loans=totals["owed_loans"],
+        period_commission=totals.get("period_commission", ZERO),
+        payday=totals.get("payday"),
     )

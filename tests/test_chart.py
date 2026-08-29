@@ -9,8 +9,9 @@ wrong is accepted by the API server and simply behaves badly.
 from __future__ import annotations
 
 import pathlib
+import re
 
-from aziza_adk import demo_data, staff_data
+from aziza_adk import demo_data, hours, staff_data
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _CHART = _ROOT / "deploy" / "helm" / "aziza"
@@ -128,6 +129,40 @@ def test_no_workload_mounts_a_service_account_token() -> None:
 
 def test_summary_declares_the_salon_timezone_rather_than_converting() -> None:
     assert "timeZone:" in _CRON
+
+
+#: cron counts Sunday as 0; `date.weekday()` counts Monday as 0.
+_CRON_TO_WEEKDAY = {0: 6, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5}
+
+
+def _scheduled() -> dict[int, int]:
+    """{weekday: hour} the end-of-day message is scheduled for, read off values.yaml."""
+    fires: dict[int, int] = {}
+    for line in _VALUES.splitlines():
+        if not (m := re.search(r'"(\d+) (\d+) \* \* ([0-9,-]+)"', line)):
+            continue
+        hour, days = int(m.group(2)), m.group(3)
+        for part in days.split(","):
+            lo, _, hi = part.partition("-")
+            for cron_day in range(int(lo), int(hi or lo) + 1):
+                fires[_CRON_TO_WEEKDAY[cron_day]] = hour
+    return fires
+
+
+def test_the_summary_fires_when_the_recording_window_shuts() -> None:
+    """The schedule and `hours.SCHEDULE` are two statements of one fact, and a drift between them
+    is silent: the message would go out while entries could still arrive, or an hour late."""
+    fires = _scheduled()
+    expected = {
+        day: closes + int(hours.GRACE.total_seconds() // 3600)
+        for day, (_, closes) in hours.SCHEDULE.items()
+    }
+    assert fires == expected
+
+
+def test_nothing_is_scheduled_on_a_day_the_salon_is_shut() -> None:
+    """Sunday and Monday have no day to report."""
+    assert set(_scheduled()) == set(hours.SCHEDULE)
 
 
 def test_the_summary_sends_and_everyone_registered_can_receive() -> None:

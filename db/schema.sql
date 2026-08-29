@@ -300,8 +300,13 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     tips           NUMERIC(12, 2) NOT NULL,
     -- Reported so she can see it, and deliberately not in the commission base (§7).
     products_total NUMERIC(12, 2) NOT NULL DEFAULT 0,
-    -- Her whole outstanding balance on the day the message went out, not that day's purchases.
-    debt_balance   NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    -- Her whole outstanding balance on the day the message went out, not that day's entries,
+    -- and split the way she is told it (§7).
+    owed_products  NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    owed_loans     NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    -- Commission accrued in the pay period so far. Tips are not in it: they are handed over the
+    -- same evening, so there is nothing of them left to accumulate.
+    period_commission NUMERIC(12, 2) NOT NULL DEFAULT 0,
     sent_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- THE claim that stops a second send. The row is written before the message goes out and
     -- committed only once it has (scripts/daily_summary.py).

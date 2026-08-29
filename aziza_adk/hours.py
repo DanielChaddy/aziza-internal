@@ -39,3 +39,19 @@ def within_recording_window(when: dt.datetime) -> bool:
     opens, closes = span
     start = when.replace(hour=opens, minute=0, second=0, microsecond=0)
     return start <= when <= start.replace(hour=closes) + GRACE
+
+
+def is_workday(day: dt.date) -> bool:
+    """Whether the salon opens at all on `day`."""
+    return day.weekday() in SCHEDULE
+
+
+def previous_workday(day: dt.date) -> dt.date:
+    """The last day the salon opened on or before `day`.
+
+    Answers `day` itself when it is one. A pay-day that lands on a Sunday is paid on the Saturday,
+    which is what "or the last previous work day" means (docs/PROJECT_DEFINITION.md §7).
+    """
+    while not is_workday(day):
+        day -= dt.timedelta(days=1)
+    return day

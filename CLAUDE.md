@@ -92,6 +92,7 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | what a specialist reads | `receipts.py`, against `docs/BRAND_VOICE.md` |
 | who may do what | `guards.py` and the tool body, never a prompt alone |
 | when the salon is open | `hours.py`, asserted through the guard in `tests/test_guards.py` |
+| when a pay period runs, and its pay-day | `pay.py`, and `tests/test_pay.py` |
 | what the salon sells and charges | `catalog_data.py`, which the seeder and the tests both read |
 | who really works here | `staff_data.py` — a Telegram id in it is a credential, not a label |
 | the invented specialists | `demo_data.py`, seeded only behind `--with-demo-specialists` |
@@ -101,7 +102,8 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | which price column a client reads | `names.py`, and `tests/test_names.py` |
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 
-`money.py`, `catalog.py`, `names.py`, `staff.py`, `receipts.py`, `hours.py`, `catalog_data.py`,
+`money.py`, `catalog.py`, `names.py`, `staff.py`, `receipts.py`, `hours.py`, `pay.py`,
+`catalog_data.py`,
 `staff_data.py` and `demo_data.py` reach no
 database and no model, and that is load-bearing rather than tidy: the commission arithmetic, the
 split-payment balance, the price column a name selects and the rendered template are the
