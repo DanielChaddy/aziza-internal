@@ -5,6 +5,7 @@ taken before the send, and a commit only once the send has succeeded. These asse
 three separately, because any one of them alone leaves a way to double-send or to go silent.
 """
 
+import datetime as dt
 from decimal import Decimal
 
 import pytest
@@ -199,13 +200,27 @@ def test_a_simulated_run_leaves_the_live_one_free_to_send(sold, outbox, conn, mo
 # --- [4] Another day is another claim -----------------------------------------------------
 
 
-def test_yesterday_is_a_separate_claim(sold, live, outbox, conn):
-    import datetime as dt
+def test_each_day_gets_its_own_claim(sold, live, outbox, conn):
+    """The key is (specialist, day), so two days are two claims and neither blocks the other.
 
+    Asserted on the sentinel's own claims rather than on the job's counts. A tally over those
+    measures whatever else the database happens to hold — which is what `_mine` exists to avoid,
+    and what made the previous version of this case fail on any day somebody had billed the day
+    before.
+    """
     daily_summary.run(_today())
+    assert _claims(conn, sold["id"]) == 1
+
+    # Move the ticket she already has back a day, so there is a second day to claim.
     yesterday = _today() - dt.timedelta(days=1)
-    # Nobody billed yesterday, so nothing is sent — and the key does not collide either way.
-    assert daily_summary.run(yesterday)["already_sent"] == 0
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE sales SET business_date = %(day)s WHERE specialist_id = %(sid)s",
+            {"day": yesterday, "sid": sold["id"]},
+        )
+
+    daily_summary.run(yesterday)
+    assert _claims(conn, sold["id"]) == 2, "one claim per day, not one per specialist"
 
 
 # --- [4] Somebody with no way to receive it, and the register ----------------------------------
