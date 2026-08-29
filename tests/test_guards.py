@@ -84,28 +84,28 @@ def test_a_registered_specialist_is_allowed_through(ctx, name):
 def test_naming_another_specialist_is_refused_here_and_not_in_the_prompt(ctx, name):
     """`on_behalf_of` is the one argument that can move money to a person the sender is not, so it
     is decided off the row the edge resolved. The prompt is advisory; this is not."""
-    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "is_admin": False}
+    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "roles": []}
     blocked = guards.before_tool_guard(_tool(name), {"on_behalf_of": "Zenaida"}, ctx(who))
     assert blocked is not None
-    assert blocked["blocked_by_guard"] is True and blocked["error"] == "not_an_admin"
+    assert blocked["blocked_by_guard"] is True and blocked["error"] == "not_an_owner"
 
 
 @pytest.mark.parametrize("name", sorted(tools.SPECIALIST_TOOL_NAMES))
-def test_an_admin_may_name_another_specialist(ctx, name):
-    who = {"id": 7, "full_name": "Zoila", "disciplines": [], "is_admin": True}
+def test_an_owner_may_name_another_specialist(ctx, name):
+    who = {"id": 7, "full_name": "Zoila", "disciplines": [], "roles": ["owner"]}
     assert guards.before_tool_guard(_tool(name), {"on_behalf_of": "Zenaida"}, ctx(who)) is None
 
 
-def test_a_session_that_cannot_be_read_is_not_an_admin(ctx):
+def test_a_session_that_cannot_be_read_is_not_an_owner(ctx):
     """Fails closed: an absent flag is not a permission."""
     who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"]}
     blocked = guards.before_tool_guard(_tool("start_ticket"), {"on_behalf_of": "X"}, ctx(who))
-    assert blocked["error"] == "not_an_admin"
+    assert blocked["error"] == "not_an_owner"
 
 
 def test_an_empty_name_is_not_an_attempt_to_name_anyone(ctx):
     """A model that passes the argument blank must not be refused as if it had named somebody."""
-    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "is_admin": False}
+    who = {"id": 7, "full_name": "Prueba", "disciplines": ["nails"], "roles": []}
     assert guards.before_tool_guard(_tool("start_ticket"), {"on_behalf_of": "  "}, ctx(who)) is None
 
 

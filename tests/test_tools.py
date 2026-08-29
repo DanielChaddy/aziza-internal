@@ -442,7 +442,7 @@ def test_what_she_owes_shows_on_her_day(working):
     assert "Lo que debes al salón: RD$15.00" in tools.my_day(tool_context=context)["summary"]
 
 
-# --- [8] The administration, which is the one caller that names somebody else ----------------
+# --- [8] An owner, who is the one caller that can name somebody else -------------------------
 #
 # Sentinel names are deliberately unlike the seeded roster's: `working_specialists` returns every
 # active specialist, so a test that called its own person "Yamilé" would collide with the demo
@@ -450,8 +450,9 @@ def test_what_she_owes_shows_on_her_day(working):
 
 
 @pytest.fixture
-def admin(ctx, make_specialist):
-    return ctx(make_specialist(full_name="Zoila Administración", is_admin=True))
+def owner(ctx, make_specialist):
+    """An owner who does no salon work: she names whose every entry is."""
+    return ctx(make_specialist(full_name="Zoila Dueña", roles=("owner",)))
 
 
 def test_an_ordinary_specialist_cannot_name_anyone_else(working):
@@ -459,7 +460,7 @@ def test_an_ordinary_specialist_cannot_name_anyone_else(working):
     not move a commission to a person the sender is not."""
     context, _ = working
     answer = tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=context)
-    assert answer["error"] == "not_an_admin"
+    assert answer["error"] == "not_an_owner"
 
 
 @pytest.mark.parametrize(
@@ -476,27 +477,55 @@ def test_an_ordinary_specialist_cannot_name_anyone_else(working):
         lambda c: tools.my_day(tool_context=c),
     ],
 )
-def test_an_admin_naming_nobody_is_refused_rather_than_credited(admin, call):
+def test_an_owner_naming_nobody_is_refused_rather_than_credited(owner, call):
     """THE property of this design: she does no salon work, so a sale in her name is a commission
     paid to the wrong person. Omission is never an attribution."""
-    assert call(admin)["error"] == "specialist_required"
+    assert call(owner)["error"] == "specialist_required"
 
 
-def test_an_admin_records_against_the_specialist_she_named(admin, make_specialist, conn):
+def test_an_owner_who_also_works_records_her_own_when_she_names_nobody(ctx, make_specialist):
+    """THE property of an additive role: holding `owner` widens what she may do and takes nothing
+    away. Naming nobody is her own work, exactly as it is for a specialist who is not an owner."""
+    her = make_specialist("wax", full_name="Zenaida Dueña", roles=("owner",))
+    context = ctx(her)
+    assert tools.start_ticket("Laura", tool_context=context)["opened"]
+    answer = tools.add_service("axilas", 1, tool_context=context)
+    assert "error" not in answer
+    assert "Trabajo de:" not in answer["ticket"], "her own work is not attributed to anyone"
+
+
+def test_an_owner_who_also_works_can_still_name_somebody_else(ctx, make_specialist, conn):
+    """The other half: widening is not a swap. She keeps the naming an owner has."""
+    her = make_specialist("wax", full_name="Zenaida Dueña", roles=("owner",))
+    other = make_specialist("nails", full_name="Ubaldina Segunda")
+    tools.start_ticket("Laura", on_behalf_of="Ubaldina", tool_context=ctx(her))
+    assert queries.open_sale(conn, other["id"]) is not None
+    assert queries.open_sale(conn, her["id"]) is None
+
+
+def test_work_can_be_recorded_for_someone_who_cannot_type(owner, make_specialist, conn):
+    """A specialist with no Telegram id reaches nothing herself, which is exactly why she must be
+    reachable through an owner — otherwise the salon cannot record her work at all."""
+    her = make_specialist("nails", full_name="Zenaida Sinclave", telegram_user_id=None)
+    assert tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)["opened"]
+    assert queries.open_sale(conn, her["id"]) is not None
+
+
+def test_an_owner_records_against_the_specialist_she_named(owner, make_specialist, conn):
     her = make_specialist("nails", full_name="Zenaida Prueba")
-    assert tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)["opened"]
-    answer = tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=admin)
+    assert tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)["opened"]
+    answer = tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
     assert answer["total"] == "RD$300.00"
 
     sale = queries.open_sale(conn, her["id"])
-    assert sale is not None, "the ticket belongs to the specialist, not the admin"
-    assert queries.open_sale(conn, session.specialist_id(admin)) is None
+    assert sale is not None, "the ticket belongs to the specialist, not the owner"
+    assert queries.open_sale(conn, session.specialist_id(owner)) is None
 
 
-def test_the_ticket_names_whose_work_it_is(admin, make_specialist):
+def test_the_ticket_names_whose_work_it_is(owner, make_specialist):
     make_specialist("nails", full_name="Zenaida Prueba")
-    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
-    answer = tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=admin)
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
+    answer = tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
     assert "Trabajo de: Zenaida Prueba" in answer["ticket"]
 
 
@@ -508,76 +537,76 @@ def test_a_specialist_recording_her_own_work_is_not_told_whose_it_is(working):
     assert "Trabajo de:" not in answer["ticket"]
 
 
-def test_the_audit_column_holds_who_typed_it(admin, make_specialist, conn):
+def test_the_audit_column_holds_who_typed_it(owner, make_specialist, conn):
     her = make_specialist("nails", full_name="Zenaida Prueba")
-    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
     row = queries.fetchone(
         conn,
         "SELECT specialist_id, recorded_by FROM sales WHERE specialist_id = %(s)s",
         {"s": her["id"]},
     )
     assert row["specialist_id"] == her["id"]
-    assert row["recorded_by"] == session.specialist_id(admin)
+    assert row["recorded_by"] == session.specialist_id(owner)
 
 
-def test_the_area_checked_is_hers_and_not_the_admins(admin, make_specialist):
-    """An admin holds no disciplines at all, so checking the sender's would refuse everything —
+def test_the_area_checked_is_hers_and_not_the_owners(owner, make_specialist):
+    """An owner holds no disciplines at all, so checking the sender's would refuse everything —
     or, worse, let anything through."""
     make_specialist("nails", full_name="Zenaida Prueba")
-    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
     assert "error" not in tools.add_service(
-        "manicura normal", 1, on_behalf_of="Zenaida", tool_context=admin
+        "manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner
     )
-    refused = tools.add_service("piernas", 1, on_behalf_of="Zenaida", tool_context=admin)
+    refused = tools.add_service("piernas", 1, on_behalf_of="Zenaida", tool_context=owner)
     assert refused["error"] == "wrong_discipline"
 
 
-def test_two_specialists_sharing_a_first_name_come_back_as_both(admin, make_specialist):
+def test_two_specialists_sharing_a_first_name_come_back_as_both(owner, make_specialist):
     make_specialist("nails", full_name="Zenaida Prueba")
     make_specialist("nails", full_name="Zenaida Segunda")
-    answer = tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
+    answer = tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
     assert answer["error"] == "ambiguous_specialist"
     assert set(answer["options"]) == {"Zenaida Prueba", "Zenaida Segunda"}
 
 
-def test_a_name_the_salon_does_not_have_is_refused(admin):
-    answer = tools.start_ticket("Laura", on_behalf_of="Nadie", tool_context=admin)
+def test_a_name_the_salon_does_not_have_is_refused(owner):
+    answer = tools.start_ticket("Laura", on_behalf_of="Nadie", tool_context=owner)
     assert answer["error"] == "unknown_specialist"
 
 
-def test_an_admin_cannot_be_named_as_having_done_the_work(admin, make_specialist):
+def test_an_owner_cannot_be_named_as_having_done_the_work(owner, make_specialist):
     """She is not in the roster a name resolves against, so there is nothing to book to her."""
-    make_specialist(full_name="Ubaldina Administra", is_admin=True)
-    answer = tools.start_ticket("Laura", on_behalf_of="Ubaldina", tool_context=admin)
+    make_specialist(full_name="Ubaldina Dueña", roles=("owner",))
+    answer = tools.start_ticket("Laura", on_behalf_of="Ubaldina", tool_context=owner)
     assert answer["error"] == "unknown_specialist"
 
 
-def test_a_clash_names_the_client_rather_than_guessing(admin, ctx, make_specialist):
+def test_a_clash_names_the_client_rather_than_guessing(owner, ctx, make_specialist):
     """Her open ticket may be for a different client, and adding to it silently would rewrite
     someone else's sale."""
     her = make_specialist("nails", full_name="Zenaida Prueba")
     tools.start_ticket("Carmen", tool_context=ctx(her))
-    answer = tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
+    answer = tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
     assert answer["error"] == "ticket_already_open"
     assert answer["client_name"] == "Carmen"
     assert answer["specialist"] == "Zenaida Prueba"
 
 
-def test_the_days_figures_land_on_her_and_not_on_the_admin(admin, ctx, make_specialist):
+def test_the_days_figures_land_on_her_and_not_on_the_owner(owner, ctx, make_specialist):
     her = make_specialist("nails", full_name="Zenaida Prueba")
-    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=admin)
-    tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=admin)
-    tools.record_payment("efectivo", "300", "0", on_behalf_of="Zenaida", tool_context=admin)
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
+    tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
+    tools.record_payment("efectivo", "300", "0", on_behalf_of="Zenaida", tool_context=owner)
 
-    hers = tools.my_day(on_behalf_of="Zenaida", tool_context=admin)["summary"]
+    hers = tools.my_day(on_behalf_of="Zenaida", tool_context=owner)["summary"]
     assert "Servicios: RD$300.00" in hers
     assert "Tu comisión (40%): RD$120.00" in hers
     assert tools.my_day(tool_context=ctx(her))["summary"] == hers
 
 
-def test_a_debt_recorded_by_the_admin_is_owed_by_the_specialist(admin, ctx, make_specialist):
+def test_a_debt_recorded_by_the_owner_is_owed_by_the_specialist(owner, ctx, make_specialist):
     her = make_specialist("nails", full_name="Zenaida Prueba")
-    answer = tools.buy_product("agua", 1, on_behalf_of="Zenaida", tool_context=admin)
+    answer = tools.buy_product("agua", 1, on_behalf_of="Zenaida", tool_context=owner)
     assert answer["balance"] == "RD$15.00"
     assert answer["owed_by"] == "Zenaida Prueba"
     assert "Lo que debes al salón: RD$15.00" in tools.my_day(tool_context=ctx(her))["summary"]

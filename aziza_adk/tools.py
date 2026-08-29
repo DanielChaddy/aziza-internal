@@ -95,7 +95,7 @@ LINES_NOT_OFFERED_MSG = (
     "cliente. Quítalos primero y lo cambio."
 )
 NOTHING_OWED_MSG = "No tienes nada pendiente con el salón."
-NOT_AN_ADMIN_MSG = "Solo la administración puede registrar el trabajo de otra especialista."
+NOT_AN_OWNER_MSG = "Solo una dueña puede registrar el trabajo de otra especialista."
 NEED_SPECIALIST_MSG = "Dime cuál especialista lo hizo y lo registro a su nombre."
 UNKNOWN_SPECIALIST_MSG = "No tengo a esa especialista en el salón."
 AMBIGUOUS_SPECIALIST_MSG = "Hay más de una especialista con ese nombre. ¿Cuál de estas fue?"
@@ -186,17 +186,22 @@ def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = 
 def _acting(conn, tool_context: Any, on_behalf_of: str) -> tuple[staff.Person | None, dict | None]:
     """Whose work this is: `(person, None)`, or `(None, error)` for the caller to return.
 
-    For an ordinary specialist it is herself and there is nothing to resolve. For an admin it is
-    whoever she named, resolved against the salon's own list — and NAMING IS REQUIRED. Omitting it
-    is refused rather than booked to the admin: she does no salon work, so a sale in her name is
-    a commission paid to the wrong person, and that is the failure this whole design exists to
-    make impossible (§3).
+    Naming somebody is an owner's alone. Omitting one means her own work — which an owner who
+    holds no disciplines cannot have, so she is asked whose it is rather than having a commission
+    booked to a person who did nothing (§3).
     """
     named = (on_behalf_of or "").strip()
-    if not session.is_admin(tool_context):
-        if named:
-            # The guard refused this already; a tool reached another way must refuse too.
-            return None, {"error": "not_an_admin", "message": NOT_AN_ADMIN_MSG}
+    if named and not session.is_owner(tool_context):
+        # The guard refused this already; a tool reached another way must refuse too.
+        return None, {"error": "not_an_owner", "message": NOT_AN_OWNER_MSG}
+
+    if not named:
+        if session.is_owner(tool_context) and not session.disciplines(tool_context):
+            return None, {
+                "error": "specialist_required",
+                "message": NEED_SPECIALIST_MSG,
+                "options": [p.name for p in staff.people(queries.working_specialists(conn))],
+            }
         who = session.specialist(tool_context)
         return (
             staff.Person(
@@ -208,12 +213,6 @@ def _acting(conn, tool_context: Any, on_behalf_of: str) -> tuple[staff.Person | 
         )
 
     roster = staff.people(queries.working_specialists(conn))
-    if not named:
-        return None, {
-            "error": "specialist_required",
-            "message": NEED_SPECIALIST_MSG,
-            "options": [person.name for person in roster],
-        }
     found = catalog.resolve(named, roster)
     if found.candidates:
         return None, {
@@ -233,7 +232,7 @@ def _acting(conn, tool_context: Any, on_behalf_of: str) -> tuple[staff.Person | 
 def _attributed(person: staff.Person, tool_context: Any) -> str | None:
     """The name to put on the ticket, or None when she is recording her own work.
 
-    Shown exactly when it could be wrong: an admin naming the wrong specialist moves a commission,
+    Shown exactly when it could be wrong: an owner naming the wrong specialist moves a commission,
     and the ticket is where she sees it before the money does.
     """
     if person.specialist_id == session.specialist_id(tool_context):
@@ -390,7 +389,7 @@ def add_service(
                     "message": UNKNOWN_SERVICE_MSG,
                     "options": list(catalog.names(queries.service_catalog(conn))),
                 }
-            # HER areas, not the sender's: an admin recording a wax service for a nails
+            # HER areas, not the sender's: an owner recording a wax service for a nails
             # specialist is the same wrong booking as the specialist doing it herself.
             if found.match.discipline not in person.disciplines:
                 return {

@@ -1,4 +1,4 @@
-"""Which specialist a spoken name means, when an admin says whose work it was.
+"""Which specialist a spoken name means, when an owner says whose work it was.
 
 Stdlib plus the accent fold, and no database: the list arrives as an argument, so the refusal of
 an unknown name and the ambiguity between two people who share one are both assertable without a
@@ -27,7 +27,7 @@ class Person:
     specialist_id: int
     name: str
     disciplines: frozenset[str]
-    #: What an admin calls her out loud. Never shown, only matched on.
+    #: What an owner calls her out loud. Never shown, only matched on.
     aliases: tuple[str, ...] = field(default_factory=tuple)
 
 

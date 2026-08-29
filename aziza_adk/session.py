@@ -12,6 +12,9 @@ from typing import Any
 from conversation_core import state
 
 SPECIALIST_KEY = "specialist"
+
+#: The one role that widens authorization (docs/PROJECT_DEFINITION.md §3).
+OWNER = "owner"
 QUOTED_KEY = "quoted"
 
 
@@ -34,6 +37,11 @@ def disciplines(context: Any) -> frozenset[str]:
     return frozenset(specialist(context).get("disciplines") or ())
 
 
+def roles(context: Any) -> frozenset[str]:
+    """What this sender may do beyond her own work. Empty is an ordinary specialist."""
+    return frozenset(specialist(context).get("roles") or ())
+
+
 def remember_specialist(
     context: Any,
     *,
@@ -41,7 +49,7 @@ def remember_specialist(
     specialist_ref: str,
     full_name: str,
     disciplines: tuple[str, ...],
-    is_admin: bool = False,
+    roles: tuple[str, ...] = (),
 ) -> None:
     _write(
         context,
@@ -51,18 +59,18 @@ def remember_specialist(
             "specialist_ref": specialist_ref,
             "full_name": full_name,
             "disciplines": list(disciplines),
-            "is_admin": bool(is_admin),
+            "roles": list(roles),
         },
     )
 
 
-def is_admin(context: Any) -> bool:
-    """May this sender record work against another specialist?
+def is_owner(context: Any) -> bool:
+    """May this sender record work against another specialist, and act outside opening hours?
 
     Read off the row the edge resolved, never off anything said during the turn. Fails closed on
     a session that cannot be read.
     """
-    return bool(specialist(context).get("is_admin"))
+    return OWNER in roles(context)
 
 
 def was_quoted(context: Any, sale_ref: str, total: Decimal) -> bool:

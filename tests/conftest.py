@@ -4,10 +4,10 @@ Three quarters of the suite touches no database either — the money, the catalo
 the rendered templates are asserted from values alone, which is what lets the arithmetic behind a
 commission be held at all.
 
-What does need one is self-cleaning: test specialists carry a sentinel Telegram id prefix and are
-deleted in both setup and teardown, cascading their sales away, so the suite is re-runnable and
-order-independent. `REQUIRE_DB=1` turns an absent database from skips into failures, so a partial
-run cannot report as a green one.
+What does need one is self-cleaning: test specialists carry a sentinel `specialist_ref` prefix
+and are deleted in both setup and teardown, cascading their sales away, so the suite is
+re-runnable and order-independent. `REQUIRE_DB=1` turns an absent database from skips into
+failures, so a partial run cannot report as a green one.
 """
 
 from __future__ import annotations
@@ -23,9 +23,12 @@ if str(_REPO_ROOT) not in sys.path:
 
 from aziza_adk import catalog_data, config, queries  # noqa: E402
 
-#: Test specialists live under this Telegram id prefix, so teardown can find and delete them.
-#: Well outside the demo dataset's range, so the two can never collide.
+#: Generated Telegram ids sit under this prefix, well outside the demo dataset's range, so
+#: the two can never collide.
 SENTINEL_PREFIX = "9999"
+#: What teardown matches on. Every factory row carries one, INCLUDING a specialist with no
+#: Telegram id — whom an id-matched clean-up would leave behind in the real dataset.
+SENTINEL_REF = "sentinel-"
 
 
 def _no_db(reason: str) -> None:
@@ -66,23 +69,23 @@ def sentinel(conn):
         # trail is not destroyable, so someone who leaves is deactivated rather than erased. Only
         # a test ever removes both.
         #
-        # Matched on either column, because an admin appears in `recorded_by` on rows whose
+        # Matched on either column, because an owner appears in `recorded_by` on rows whose
         # `specialist_id` is somebody else entirely.
-        sentinels = "(SELECT id FROM specialists WHERE telegram_user_id LIKE %(prefix)s)"
+        sentinels = "(SELECT id FROM specialists WHERE specialist_ref LIKE %(prefix)s)"
         with conn.cursor() as cur:
             cur.execute(
                 f"DELETE FROM specialist_ledger "
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
-                {"prefix": SENTINEL_PREFIX + "%"},
+                {"prefix": SENTINEL_REF + "%"},
             )
             cur.execute(
                 f"DELETE FROM sales "
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
-                {"prefix": SENTINEL_PREFIX + "%"},
+                {"prefix": SENTINEL_REF + "%"},
             )
             cur.execute(
-                "DELETE FROM specialists WHERE telegram_user_id LIKE %(prefix)s",
-                {"prefix": SENTINEL_PREFIX + "%"},
+                "DELETE FROM specialists WHERE specialist_ref LIKE %(prefix)s",
+                {"prefix": SENTINEL_REF + "%"},
             )
 
     clean()
@@ -99,15 +102,22 @@ def make_specialist(conn, sentinel):
     """
     seq = {"n": 0}
 
-    def make(*disciplines: str, full_name: str = "Prueba Sentinel", is_admin: bool = False) -> dict:
+    def make(
+        *disciplines: str,
+        full_name: str = "Prueba Sentinel",
+        roles: tuple[str, ...] = (),
+        telegram_user_id: str | None = "",
+    ) -> dict:
         seq["n"] += 1
-        telegram_user_id = f"{SENTINEL_PREFIX}{seq['n']:04d}"
+        # "" asks for a generated one; None is someone who cannot talk to the assistant at all.
+        if telegram_user_id == "":
+            telegram_user_id = f"{SENTINEL_PREFIX}{seq['n']:04d}"
+        ref = f"{SENTINEL_REF}{seq['n']:04d}"
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO specialists "
-                "  (specialist_ref, telegram_user_id, full_name, is_admin) "
-                "VALUES (%s, %s, %s, %s) RETURNING id",
-                (f"sentinel-{telegram_user_id}", telegram_user_id, full_name, is_admin),
+                "INSERT INTO specialists (specialist_ref, telegram_user_id, full_name) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (ref, telegram_user_id, full_name),
             )
             specialist_id = cur.fetchone()["id"]
             for code in disciplines:
@@ -116,13 +126,19 @@ def make_specialist(conn, sentinel):
                     "SELECT %s, id FROM disciplines WHERE code = %s",
                     (specialist_id, code),
                 )
+            for code in roles:
+                cur.execute(
+                    "INSERT INTO specialist_roles (specialist_id, role_id) "
+                    "SELECT %s, id FROM roles WHERE code = %s",
+                    (specialist_id, code),
+                )
         return {
             "id": specialist_id,
-            "specialist_ref": f"sentinel-{telegram_user_id}",
+            "specialist_ref": ref,
             "full_name": full_name,
             "disciplines": list(disciplines),
+            "roles": list(roles),
             "telegram_user_id": telegram_user_id,
-            "is_admin": is_admin,
         }
 
     return make

@@ -128,18 +128,25 @@ def _session_block(ctx: Any) -> str:
         return "\n\nTHIS SESSION: the sender is not a registered specialist. You can do nothing."
     name = str(who.get("full_name") or "").split()
     first = name[0] if name else "a specialist"
-    if who.get("is_admin"):
-        # Stated per turn rather than left to the model to infer from the tools' refusals: it
-        # changes what every single call must carry.
+    owner = session.OWNER in (who.get("roles") or ())
+    areas = ", ".join(sorted(who.get("disciplines") or ()))
+    # Stated per turn rather than left to the model to infer from the tools' refusals: it changes
+    # what every single call must carry.
+    if owner and not areas:
         return (
-            f"\n\nTHIS SESSION: you are talking to {first}, who is THE ADMINISTRATION. She does "
-            f"no salon work herself, so every entry must name the specialist it belongs to — pass "
-            f"`on_behalf_of` on every call. Never ask who she is."
+            f"\n\nTHIS SESSION: you are talking to {first}, an OWNER who does no salon work "
+            f"herself. Every entry must name the specialist it belongs to — pass `on_behalf_of` "
+            f"on every call. Never ask who she is."
         )
-    disciplines = ", ".join(sorted(who.get("disciplines") or ())) or "none"
+    if owner:
+        return (
+            f"\n\nTHIS SESSION: you are talking to {first}, an OWNER whose own areas are: "
+            f"{areas}. Pass `on_behalf_of` ONLY when she says the work was somebody else's; "
+            f"leave it out and it is recorded as hers. Never ask who she is."
+        )
     return (
-        f"\n\nTHIS SESSION: you are talking to {first}, whose areas are: {disciplines}. She is "
-        f"recording her own work, so never pass `on_behalf_of`. Never ask who she is."
+        f"\n\nTHIS SESSION: you are talking to {first}, whose areas are: {areas or 'none'}. She "
+        f"is recording her own work, so never pass `on_behalf_of`. Never ask who she is."
     )
 
 

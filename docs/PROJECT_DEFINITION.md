@@ -23,11 +23,11 @@ recording a tip, closing the sale against the specialist who did the work, charg
 for what she takes for herself, recording what she pays against that, and reporting each
 specialist's day.
 
-The administration does all of the above against a named specialist rather than herself, and may
+An owner does all of the above against a named specialist as well as herself, and may
 read that specialist's day.
 
 Out of scope, and the assistant says so rather than improvising: appointments, changing a price,
-discounts, another specialist's figures **when the sender is not the administration**, anything
+discounts, another specialist's figures **when the sender is not an owner**, anything
 about a client beyond her name and which of the salon's two price columns she reads.
 
 ## §3 · Identity, and why it is not a conversation
@@ -45,21 +45,28 @@ matched against a pre-registered row *is* the credential.
 someone who does both wax and nails holds both, and is not a third discipline. The check is
 deterministic and lives in `tools.add_service`, where the resolved service's discipline is in hand.
 It is checked against the discipline of the specialist the work is BOOKED to, not of the sender —
-an admin entering a wax service for a nails specialist is the same wrong booking as the specialist
+an owner entering a wax service for a nails specialist is the same wrong booking as the specialist
 doing it herself.
 
-**The administration is the one caller that names somebody else, and the naming is not the model's
-to invent.** `specialists.is_admin` is the authorization, read off the row the edge resolved and
-enforced in `guards.before_tool_guard`, so no wording inside a turn can reach it. Three properties
-hold it together:
+**Roles and disciplines are independent, and both are additive.** A discipline is what a person
+may record; a role is what she may do beyond her own work. Someone can hold either, both or
+neither, and the pair is two many-to-many relations rather than one column, because an owner who
+also does wax is not a third kind of person.
 
-- **Naming is required, never defaulted.** An admin does no salon work, so an entry without a name
-  is refused rather than attributed to her. Omission is the silent failure here, and a commission
-  is what a person is paid.
+**An owner is the caller that names somebody else, and the naming is not the model's to invent.**
+The `owner` role is the authorization, read off the row the edge resolved and enforced in
+`guards.before_tool_guard`, so no wording inside a turn can reach it. Three properties hold it
+together:
+
+- **Naming is required of an owner who does no salon work.** She has no work of her own for an
+  unnamed entry to belong to, so it is refused rather than attributed to her; omission is the
+  silent failure here, and a commission is what a person is paid. An owner who *does* hold a
+  discipline is recording her own work when she names nobody, which is the ordinary case.
 - **The name resolves deterministically.** `staff.py` matches what she said against the salon's
   own roster through the same resolver the catalog uses, so two specialists sharing a first name
-  come back as two candidates and she says which. Admins are not in that roster: there is nothing
-  to book to one.
+  come back as two candidates and she says which. The roster is everyone holding a discipline:
+  someone with none has nothing to book to, and someone who cannot type is still on it, because
+  the salon records her work whether or not she can enter it.
 - **Both halves are recorded, and one is shown.** `specialist_id` is whose work it is and
   `recorded_by` is who typed it, always set and never NULL, so the audit trail cannot be confused
   with a lost one. The ticket names whose work it is whenever somebody else entered it — the same

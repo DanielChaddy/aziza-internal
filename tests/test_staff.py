@@ -16,22 +16,34 @@ from aziza_adk import catalog, queries, staff, staff_data
 # --- [1] The salon's real people --------------------------------------------------------------
 
 
-def test_there_is_an_administrator():
-    admins = [p for p in staff_data.STAFF if p.get("is_admin")]
-    assert len(admins) == 1
+def test_the_salon_has_an_owner():
+    """Naming another specialist's work is an owner's alone, so a dataset with none in it can
+    record nothing for anybody who cannot type."""
+    assert [p for p in staff_data.STAFF if "owner" in p["roles"]]
 
 
-def test_the_administrator_holds_no_disciplines():
-    """She records other people's work and does none, so there is nothing to authorize her for —
-    and every entry she makes names whose it is."""
-    admin = next(p for p in staff_data.STAFF if p.get("is_admin"))
-    assert admin["disciplines"] == ()
+def test_every_role_a_person_holds_is_one_the_salon_defines():
+    """A role code that no row in ROLES matches seeds nothing and grants nothing, silently."""
+    defined = {r["code"] for r in staff_data.ROLES}
+    for person in staff_data.STAFF:
+        assert set(person["roles"]) <= defined, person["specialist_ref"]
 
 
 @pytest.mark.parametrize("person", staff_data.STAFF, ids=lambda p: p["specialist_ref"])
-def test_every_real_person_carries_a_usable_telegram_id(person):
-    assert person["telegram_user_id"].isdigit()
+def test_a_telegram_id_is_absent_or_usable_and_never_blank(person):
+    """`None` is someone the salon records work for who cannot talk to the assistant. The empty
+    string is neither, and would be matched by a sender who supplied nothing."""
+    tg = person["telegram_user_id"]
+    assert tg is None or (isinstance(tg, str) and tg.isdigit())
     assert person["full_name"].strip()
+
+
+@pytest.mark.parametrize("person", staff_data.STAFF, ids=lambda p: p["specialist_ref"])
+def test_someone_who_cannot_type_has_work_to_record(person):
+    """Her only way in is an owner naming her, and a name resolves against the disciplines
+    roster — so a row with neither an id nor a discipline can neither act nor be acted for."""
+    if person["telegram_user_id"] is None:
+        assert person["disciplines"], person["specialist_ref"]
 
 
 def test_no_real_person_shares_a_ref_with_an_invented_one():
