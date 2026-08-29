@@ -169,7 +169,27 @@ hand. A figure that appears from nowhere is the kind people dispute later. Produ
 whole outstanding balance are reported beside them: the balance is shown rather than subtracted,
 because taking it off today's figure would state a deduction nobody has made.
 
-## §8 · The end of the day
+## §8 · The working day, and its end
+
+**The salon opens Tuesday to Friday 09:00–19:00 and Saturday 09:00–18:00, and is closed Sunday and
+Monday.** `aziza_adk/hours.py` is the schedule and nothing else holds a copy of it.
+
+**A specialist records inside those hours plus one; an owner records whenever.** The grace hour
+is there because finishing a client at 19:20 is ordinary, and a window that refused her would be
+worked around rather than obeyed. Outside it — after the grace hour, before opening, and all day
+Sunday and Monday — the ticket path is an owner's alone: `start_ticket`, `add_service`,
+`sell_product`, `record_payment`, `buy_product`. Reading is never gated, so she can still see her
+day at midnight.
+
+The refusal is in `guards.before_tool_guard`, beside the one on `on_behalf_of`, because it is the
+same widening read the same way: off the role the edge resolved, where no wording in a turn
+reaches it. It is **not** re-checked in the tool bodies, which is the one place this design does
+not double up — the guard runs on every call ADK makes, and putting the clock in ten bodies would
+make every tool test depend on the hour it ran at.
+
+**`hours.py` holds no clock.** Every predicate is handed the moment it judges, and the single
+wall-clock read on the turn path is `tools.now` — so "a specialist is refused at 20:01 on a
+Tuesday" is a value a test asserts rather than an evening it waits for.
 
 `scripts/daily_summary.py` sends each specialist who billed that day one message. Telegram needs
 no approved template and has no reply window, so it is a plain send.

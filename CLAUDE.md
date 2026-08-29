@@ -91,6 +91,7 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | an amount, a rate, a rounding | `money.py`, and `tests/test_money.py` |
 | what a specialist reads | `receipts.py`, against `docs/BRAND_VOICE.md` |
 | who may do what | `guards.py` and the tool body, never a prompt alone |
+| when the salon is open | `hours.py`, asserted through the guard in `tests/test_guards.py` |
 | what the salon sells and charges | `catalog_data.py`, which the seeder and the tests both read |
 | who really works here | `staff_data.py` — a Telegram id in it is a credential, not a label |
 | the invented specialists | `demo_data.py`, seeded only behind `--with-demo-specialists` |
@@ -98,12 +99,14 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | which price column a client reads | `names.py`, and `tests/test_names.py` |
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 
-`money.py`, `catalog.py`, `names.py`, `staff.py`, `receipts.py`, `catalog_data.py`,
+`money.py`, `catalog.py`, `names.py`, `staff.py`, `receipts.py`, `hours.py`, `catalog_data.py`,
 `staff_data.py` and `demo_data.py` reach no
 database and no model, and that is load-bearing rather than tidy: the commission arithmetic, the
 split-payment balance, the price column a name selects and the rendered template are the
 behaviours that must be assertable, and an assertion that reaches a database is one the gate can
-skip.
+skip. `hours.py` takes it further and holds no CLOCK either — the moment is a parameter, and
+`tools.now` is the one wall-clock read on the turn path, so "refused at 20:01 on a Tuesday" is a
+value rather than an evening spent waiting.
 
 ## Tests
 
