@@ -6,6 +6,8 @@ session. And the transcriber must be ATTACHED: one written but never passed leav
 test green while every real voice note reaches `on_unsupported`.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from channel_telegram import bot_client, dedupe, media, security
 from channel_telegram.testing import FakeResponse, file_found, sent
@@ -124,7 +126,7 @@ def test_a_voice_note_is_transcribed_and_run_as_a_typed_turn(
     text rather than arriving as a shape no guard reads."""
     heard = {}
 
-    async def transcribe(audio, mime, *, model, language):
+    async def transcribe(audio, mime, *, model, language, on_failure=None):
         heard.update(mime=mime, bytes=audio, language=language)
         return "  le hice manicure a Laura  "
 
@@ -146,7 +148,7 @@ def test_the_audio_is_fetched_with_an_audio_cap_not_an_image_one(
     """An image cap on an audio fetch refuses every note, and the refusal is a log line nobody
     reads rather than a failure."""
 
-    async def transcribe(audio, mime, *, model, language):
+    async def transcribe(audio, mime, *, model, language, on_failure=None):
         return "hola"
 
     monkeypatch.setattr(channel.transcription, "transcribe", transcribe)
@@ -158,7 +160,7 @@ def test_the_audio_is_fetched_with_an_audio_cap_not_an_image_one(
 def test_a_voice_note_that_yields_no_words_says_so_rather_than_claiming_speech_is_unread(
     client, known, fake_http, monkeypatch
 ):
-    async def transcribe(audio, mime, *, model, language):
+    async def transcribe(audio, mime, *, model, language, on_failure=None):
         return None
 
     monkeypatch.setattr(channel.transcription, "transcribe", transcribe)
@@ -302,3 +304,66 @@ async def test_any_other_failure_still_reaches_the_channels_fallback(monkeypatch
             },
             "hola",
         )
+
+
+# --- a voice note that produced no words, and the three reasons it might not have --------------
+# The package classifies; this asserts the wiring between it and what the specialist reads. The
+# real `transcribe` runs, with only its client replaced — a stub of it here would assert nothing
+# about the two halves agreeing.
+
+
+class _Status(Exception):
+    def __init__(self, code: int) -> None:
+        super().__init__("upstream")
+        self.code = code
+
+
+@pytest.fixture
+def transcription_answers(monkeypatch):
+    """Script what the model client does, and run one voice note through the real path."""
+    from agent_transcription import gemini
+
+    async def go(answer) -> str | None:
+        class Models:
+            async def generate_content(self, **_):
+                if isinstance(answer, Exception):
+                    raise answer
+                return SimpleNamespace(text=answer)
+
+        monkeypatch.setattr(
+            gemini, "_client", lambda: SimpleNamespace(aio=SimpleNamespace(models=Models()))
+        )
+        words = await channel._transcribe(b"opus", "audio/ogg")
+        if words:
+            return words
+        return await channel.SalonHandler().on_unsupported(
+            SimpleNamespace(msg_type="audio", sender=SENDER)
+        )
+
+    return go
+
+
+@pytest.mark.anyio
+async def test_a_spent_quota_says_so_instead_of_blaming_her_voice(transcription_answers):
+    """THE case: she records it again, and again, and it is never her audio that is the problem."""
+    assert await transcription_answers(_Status(429)) == channel.QUOTA_EXHAUSTED_TEXT
+
+
+@pytest.mark.anyio
+async def test_another_failure_says_it_could_not_be_processed(transcription_answers):
+    """Not her fault either, but it may work in a moment — which a quota will not."""
+    assert await transcription_answers(_Status(503)) == channel.VOICE_FAILED_TEXT
+
+
+@pytest.mark.anyio
+async def test_silence_is_still_her_audio(transcription_answers):
+    """No words is the one case where "I did not understand you" is the true thing to say."""
+    assert await transcription_answers("   ") == channel.VOICE_UNCLEAR_TEXT
+
+
+@pytest.mark.anyio
+async def test_a_reason_does_not_survive_into_the_next_voice_note(transcription_answers):
+    """The reason is cleared at the start of each transcription, so a quota this morning does not
+    still be the answer to a genuinely unclear note this afternoon."""
+    assert await transcription_answers(_Status(429)) == channel.QUOTA_EXHAUSTED_TEXT
+    assert await transcription_answers("   ") == channel.VOICE_UNCLEAR_TEXT

@@ -19,7 +19,7 @@ channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform
 agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-adk-v0.1.0#subdirectory=packages/agent-adk
 agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-telemetry-v0.1.0#subdirectory=packages/agent-telemetry
 agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-evalkit-v0.1.0#subdirectory=packages/agent-evalkit
-agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-transcription-v0.1.1#subdirectory=packages/transcription
+agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-transcription-v0.2.0#subdirectory=packages/transcription
 
 # The framework, with the [db] extra that pulls SQLAlchemy for DatabaseSessionService.
 google-adk[db]==2.3.0

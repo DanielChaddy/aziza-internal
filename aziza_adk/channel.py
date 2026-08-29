@@ -17,6 +17,7 @@ Run:  uvicorn aziza_adk.channel:app --port 8080
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 
 import agent_telemetry as telemetry
@@ -52,6 +53,9 @@ UNSUPPORTED_TEXT = "Solo puedo leer mensajes de texto y notas de voz. ¿Me lo es
 # someone who just spoke that speech is unread is false, and invites the same failed retry.
 VOICE_UNCLEAR_TEXT = (
     "Recibí tu nota de voz pero no entendí lo que dijiste. ¿Me la repites o me lo escribes?"
+)
+VOICE_FAILED_TEXT = (
+    "No pude procesar tu nota de voz ahora mismo. Inténtalo de nuevo o escríbeme lo que hiciste."
 )
 
 
@@ -162,19 +166,38 @@ class SalonHandler(TurnHandler):
         return MEDIA_REFUSED_TEXT
 
     async def on_unsupported(self, msg) -> str | None:
-        # The channel routes a voice note here only once transcription has produced nothing.
+        # The channel routes a voice note here only once transcription has produced nothing, and
+        # the three kinds of nothing need three different things said about them.
         if msg.msg_type == "audio":
-            return VOICE_UNCLEAR_TEXT
+            because = _NO_WORDS_BECAUSE.get()
+            if because == transcription.QUOTA:
+                return QUOTA_EXHAUSTED_TEXT
+            return VOICE_UNCLEAR_TEXT if because is None else VOICE_FAILED_TEXT
         return UNSUPPORTED_TEXT
+
+
+#: Why the last voice note on THIS turn produced no words, or None when nothing was said. A
+#: context variable rather than a module one: two turns interleave on one event loop, and a
+#: shared slot would answer one specialist with the other's reason.
+_NO_WORDS_BECAUSE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "no_words_because", default=None
+)
 
 
 async def _transcribe(audio: bytes, mime: str) -> str | None:
     """The words in a voice note, for the channel to run as a typed turn.
 
-    Spanish is a hint about what to expect, never an instruction to translate.
+    Spanish is a hint about what to expect, never an instruction to translate. The reason for
+    silence is kept for `on_unsupported`, which is where the channel lands when there are no
+    words and is the only place that can say which kind of silence it was.
     """
+    _NO_WORDS_BECAUSE.set(None)
     return await transcription.transcribe(
-        audio, mime, model=config.TRANSCRIBE_MODEL, language="Spanish"
+        audio,
+        mime,
+        model=config.TRANSCRIBE_MODEL,
+        language="Spanish",
+        on_failure=_NO_WORDS_BECAUSE.set,
     )
 
 
