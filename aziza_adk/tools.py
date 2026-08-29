@@ -28,6 +28,12 @@ from aziza_adk.money import ZERO
 
 logger = logging.getLogger("aziza_adk.tools")
 
+#: What the salon's hours gate: everything that writes a ticket or moves money. Reading is left
+#: open, so she can still look at her day after closing — see docs/PROJECT_DEFINITION.md §8.
+AFTER_HOURS_TOOL_NAMES = frozenset(
+    {"start_ticket", "add_service", "sell_product", "record_payment", "buy_product"}
+)
+
 #: Every tool needs a registered specialist behind it. `guards.before_tool_guard` refuses each of
 #: them without one; the bodies re-check.
 SPECIALIST_TOOL_NAMES = frozenset(
@@ -96,6 +102,7 @@ LINES_NOT_OFFERED_MSG = (
 )
 NOTHING_OWED_MSG = "No tienes nada pendiente con el salón."
 NOT_AN_OWNER_MSG = "Solo una dueña puede registrar el trabajo de otra especialista."
+AFTER_HOURS_MSG = "Fuera del horario del salón esto solo lo registra una dueña."
 NEED_SPECIALIST_MSG = "Dime cuál especialista lo hizo y lo registro a su nombre."
 UNKNOWN_SPECIALIST_MSG = "No tengo a esa especialista en el salón."
 AMBIGUOUS_SPECIALIST_MSG = "Hay más de una especialista con ese nombre. ¿Cuál de estas fue?"
@@ -129,10 +136,19 @@ _METHODS = {
 }
 
 
+def now() -> dt.datetime:
+    """The salon's own clock, and the ONE place the turn path reads it.
+
+    Public because `guards.py` judges the working day against it: a second reader would be a
+    second thing a test has to hold still, and the one it missed is the one that fires.
+    """
+    return dt.datetime.now(_TZ)
+
+
 def _today() -> dt.date:
-    """The salon's own date. A night that runs past midnight still belongs to the day it began,
-    which is what the closing hour would encode if the salon gave us one — an open item."""
-    return dt.datetime.now(_TZ).date()
+    """The salon's own date. A night that runs past midnight still belongs to the day it began;
+    rolling this on `hours.SCHEDULE` rather than on midnight is its own change."""
+    return now().date()
 
 
 def _unauthorized(tool_context: Any) -> dict | None:

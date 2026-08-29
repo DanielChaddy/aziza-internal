@@ -27,7 +27,7 @@ from typing import Any
 from agent_adk import latest_user_text, text_response
 from conversation_core import screens
 
-from aziza_adk import session, tools
+from aziza_adk import hours, session, tools
 
 logger = logging.getLogger("aziza_adk.guards")
 
@@ -53,16 +53,17 @@ def before_model_safety(callback_context: Any, llm_request: Any) -> Any:
 
 
 def before_tool_guard(tool: Any, args: dict, tool_context: Any) -> dict | None:
-    """Authorize a tool call. Identity only, and identity is the whole of it here.
+    """Authorize a tool call: who the sender is, and when she is asking.
 
-    Every tool writes or reads against ONE specialist, and that specialist is what a commission
-    is paid to — so the questions this layer answers are whether the session has one at all, and
-    whether it may name a different one. Both are decidable from session state, which is why they
-    are here rather than in a query.
+    Every tool writes or reads against ONE specialist, and that specialist is what a commission is
+    paid to — so this layer answers whether the session has one at all, whether it may name a
+    different one, and whether the salon is open to it. All three are decidable from session state
+    and the clock, which is why they are here rather than in a query.
 
     `on_behalf_of` is the one argument that can move money to a person the sender is not. It is
     refused here, off the role the edge resolved, so no wording in a turn can reach it — the
-    prompt is advisory and this is not.
+    prompt is advisory and this is not. The hours are the same widening read the same way: an
+    owner may record outside them, and nobody else may.
     """
     name = getattr(tool, "name", "") or getattr(tool, "__name__", "")
     if name not in tools.SPECIALIST_TOOL_NAMES:
@@ -71,6 +72,11 @@ def before_tool_guard(tool: Any, args: dict, tool_context: Any) -> dict | None:
         return _blocked("not_registered", tools.NOT_REGISTERED_MSG, name)
     if str((args or {}).get("on_behalf_of") or "").strip() and not session.is_owner(tool_context):
         return _blocked("not_an_owner", tools.NOT_AN_OWNER_MSG, name)
+    # An owner is trusted with the hours as she is trusted with whose work it is: both are the
+    # same widening, and both are read off the row the edge resolved.
+    if name in tools.AFTER_HOURS_TOOL_NAMES and not session.is_owner(tool_context):
+        if not hours.within_recording_window(tools.now()):
+            return _blocked("after_hours", tools.AFTER_HOURS_MSG, name)
     return None
 
 
