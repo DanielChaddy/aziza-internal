@@ -236,7 +236,24 @@ make every tool test depend on the hour it ran at.
 wall-clock read on the turn path is `tools.now` — so "a specialist is refused at 20:01 on a
 Tuesday" is a value a test asserts rather than an evening it waits for.
 
-`scripts/daily_summary.py` sends each specialist who billed that day one message. Telegram needs
+**Pay is twice a month: the 1st–15th and the 16th to the end of it, paid on the 15th and the
+30th.** A pay-day that lands on a day the salon is shut is paid on the last one before it, and a
+February with no 30th pays on its last day. `aziza_adk/pay.py` holds the calendar and, like
+`hours.py`, takes the day it is asked about rather than reading a clock.
+
+**What accumulates toward pay-day is commission, and not tips.** Tips are handed over the same
+evening they are earned, so there is nothing of them left to accrue. What she owes is shown beside
+the figure and never subtracted from it — the salon lets her settle when she likes, and deducting
+would state a deduction nobody has made — split into what she consumed and what she borrowed.
+
+`scripts/daily_summary.py` sends each specialist who billed that day one message, and asks every
+owner to count the register unless one of them already has. **That check is the real state rather
+than a record of having asked**, which is stronger than a claim: a retry after a failed send still
+asks, and nothing asks again once the count is in.
+
+**Somebody with no Telegram id is skipped before the claim, not after.** Her work is recorded by
+an owner and she has no way to receive a message; claiming her day would mark it reported forever,
+so the moment she has an id there would be nothing left to send. Telegram needs
 no approved template and has no reply window, so it is a plain send.
 
 Idempotent by construction rather than by care: the `daily_summaries` row is claimed before the

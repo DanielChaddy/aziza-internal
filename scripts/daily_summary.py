@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from channel_telegram import bot_client  # noqa: E402
 
-from aziza_adk import config, money, queries, tools  # noqa: E402
+from aziza_adk import config, money, queries, receipts, tools  # noqa: E402
 
 log = logging.getLogger("aziza_adk.daily_summary")
 
@@ -55,14 +55,18 @@ def _send(telegram_user_id: str, text: str) -> bool:
 
 
 def run(day: dt.date) -> dict[str, int]:
-    counts = {"sent": 0, "already_sent": 0, "send_failed": 0}
+    counts = {"sent": 0, "already_sent": 0, "send_failed": 0, "no_channel": 0, "asked": 0}
     live = config.SUMMARY_SEND_MODE == "live"
 
     with queries.connect() as conn:
         for person in queries.specialists_billed_on(conn, day):
-            totals = queries.day_totals(conn, person["id"], day)
-            services_total, tips = totals["services_total"], totals["tips"]
-            products_total, owed = totals["products_total"], totals["debt_balance"]
+            # Her work is recorded by an owner and she has no way to receive this. Skipped BEFORE
+            # the claim, so the day stays unclaimed and reaches her the moment she has an id.
+            if not person["telegram_user_id"]:
+                counts["no_channel"] += 1
+                continue
+            totals = tools.day_figures(conn, person["id"], day)
+            services_total = totals["services_total"]
             # On services alone. Products are reported to her and pay her nothing (§7).
             earned = money.commission(services_total, config.COMMISSION_PCT)
 
@@ -72,18 +76,18 @@ def run(day: dt.date) -> dict[str, int]:
                 day,
                 services_total=services_total,
                 commission=earned,
-                tips=tips,
-                products_total=products_total,
-                debt_balance=owed,
+                tips=totals["tips"],
+                products_total=totals["products_total"],
+                owed_products=totals["owed_products"],
+                owed_loans=totals["owed_loans"],
+                period_commission=totals["period_commission"],
             )
             if not claimed:
                 conn.rollback()
                 counts["already_sent"] += 1
                 continue
 
-            text = tools.summary_text(
-                person["full_name"], day, services_total, tips, products_total, owed
-            )
+            text = tools.summary_text(person["full_name"], day, totals)
             if not _send(person["telegram_user_id"], text):
                 conn.rollback()  # the claim goes back; the next run retries this person
                 counts["send_failed"] += 1
@@ -93,7 +97,28 @@ def run(day: dt.date) -> dict[str, int]:
             conn.commit() if live else conn.rollback()
             counts["sent"] += 1
 
+        counts["asked"] = _ask_to_close_the_register(conn, day)
+
     return counts
+
+
+def _ask_to_close_the_register(conn, day: dt.date) -> int:
+    """Ask every owner to count the register, unless one of them already has.
+
+    The already-closed check IS the idempotence here, and it is better than a claim would be: it
+    is the real state rather than a record of having asked, so a retry after a failed send still
+    asks, and nothing asks again once the count is in.
+    """
+    if queries.register_close_for(conn, day) is not None:
+        return 0
+    text = receipts.render_register_prompt(
+        day,
+        queries.expected_register(conn, day),
+        [(t["full_name"], t["tips"]) for t in queries.tips_owed(conn, day)],
+    )
+    return sum(
+        _send(owner["telegram_user_id"], text) for owner in queries.owners_with_a_channel(conn)
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,12 +132,15 @@ def main(argv: list[str] | None = None) -> int:
 
     counts = run(day)
     log.info(
-        "summary.done date=%s mode=%s sent=%s already_sent=%s send_failed=%s",
+        "summary.done date=%s mode=%s sent=%s already_sent=%s send_failed=%s "
+        "no_channel=%s asked=%s",
         day,
         config.SUMMARY_SEND_MODE,
         counts["sent"],
         counts["already_sent"],
         counts["send_failed"],
+        counts["no_channel"],
+        counts["asked"],
     )
     # A failed send is not a failed run: the claim went back and the next run retries it. The
     # exit code is for the scheduler, and a non-zero one here would retry the whole day.

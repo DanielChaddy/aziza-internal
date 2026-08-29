@@ -126,7 +126,7 @@ def test_the_day_shows_all_four_figures_and_the_rate_beside_the_commission():
     )
     assert "Servicios: RD$8,400.00" in out
     assert "Tu comisión (40%): RD$3,360.00" in out
-    assert "Propinas: RD$650.00" in out
+    assert "Propinas (te las entregamos hoy): RD$650.00" in out
     assert "jueves 27 de agosto de 2026" in out
 
 
@@ -140,7 +140,7 @@ def test_what_they_made_is_the_commission_plus_the_tips():
         commission=Decimal("3360.00"),
         tips=Decimal("650.00"),
     )
-    assert "Total para ti: RD$4,010.00" in out
+    assert "Total para ti hoy: RD$4,010.00" in out
 
 
 def test_a_day_with_no_tips_still_says_so():
@@ -152,7 +152,8 @@ def test_a_day_with_no_tips_still_says_so():
         commission=Decimal("400.00"),
         tips=Decimal("0.00"),
     )
-    assert "Propinas: RD$0.00" in out and "Total para ti: RD$400.00" in out
+    assert "Propinas (te las entregamos hoy): RD$0.00" in out
+    assert "Total para ti hoy: RD$400.00" in out
 
 
 @pytest.mark.parametrize(
@@ -240,7 +241,7 @@ def test_the_day_reports_products_without_commissioning_them():
     )
     assert "Productos vendidos: RD$25.00 (no generan comisión)" in out
     assert "Tu comisión (40%): RD$120.00" in out
-    assert "Total para ti: RD$320.00" in out  # commission + tips, and nothing from the product
+    assert "Total para ti hoy: RD$320.00" in out  # commission + tips, and nothing from the product
 
 
 def test_what_she_owes_is_shown_and_not_subtracted():
@@ -253,10 +254,10 @@ def test_what_she_owes_is_shown_and_not_subtracted():
         commission_pct=40,
         commission=Decimal("120.00"),
         tips=Decimal("0.00"),
-        debt_balance=Decimal("15.00"),
+        owed_products=Decimal("15.00"),
     )
-    assert "Lo que debes al salón: RD$15.00" in out
-    assert "Total para ti: RD$120.00" in out
+    assert "• Consumo: RD$15.00" in out
+    assert "Total para ti hoy: RD$120.00" in out
 
 
 def test_a_clean_slate_says_nothing_about_debt():
@@ -270,3 +271,56 @@ def test_a_clean_slate_says_nothing_about_debt():
     )
     assert "debes" not in out
     assert "Productos" not in out
+
+
+# --- [6] What she owes, and what is accruing --------------------------------------------------
+
+
+def _day(**kwargs) -> str:
+    base = {
+        "specialist_name": "Yamilé",
+        "day": dt.date(2026, 8, 27),
+        "services_total": Decimal("800.00"),
+        "commission_pct": 40,
+        "commission": Decimal("320.00"),
+        "tips": Decimal("50.00"),
+    }
+    return render_day(**{**base, **kwargs})
+
+
+def test_the_two_debts_are_told_apart_and_still_add_up():
+    """Owing for a drink and owing cash do not feel the same to be told you owe."""
+    out = _day(owed_products=Decimal("15.00"), owed_loans=Decimal("500.00"))
+    assert "• Consumo: RD$15.00" in out
+    assert "• Préstamos: RD$500.00" in out
+    assert "• Total: RD$515.00" in out
+
+
+def test_a_debt_of_only_one_kind_does_not_name_the_other():
+    """A zero beside a real figure reads as a second thing owed."""
+    out = _day(owed_loans=Decimal("500.00"))
+    assert "• Préstamos: RD$500.00" in out and "Consumo" not in out
+
+
+def test_neither_debt_is_taken_off_what_she_made():
+    """The salon lets her settle whenever she likes, so subtracting would state a deduction
+    nobody has made."""
+    out = _day(owed_products=Decimal("15.00"), owed_loans=Decimal("500.00"))
+    assert "Total para ti hoy: RD$370.00" in out  # 320 commission + 50 tips, untouched
+
+
+def test_the_accumulated_figure_names_the_day_it_is_paid():
+    out = _day(period_commission=Decimal("2400.00"), payday=dt.date(2026, 8, 29))
+    assert "Acumulado para el pago del sábado 29 de agosto de 2026: RD$2,400.00" in out
+
+
+def test_tips_are_not_in_what_accumulates():
+    """They are handed over the same evening, so there is nothing of them left to accumulate."""
+    out = _day(
+        tips=Decimal("900.00"), period_commission=Decimal("320.00"), payday=dt.date(2026, 8, 29)
+    )
+    assert "Acumulado para el pago del sábado 29 de agosto de 2026: RD$320.00" in out
+
+
+def test_a_day_with_no_payday_named_says_nothing_about_one():
+    assert "Acumulado" not in _day()

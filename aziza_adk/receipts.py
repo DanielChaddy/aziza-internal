@@ -159,30 +159,47 @@ def render_day(
     commission: Decimal,
     tips: Decimal,
     products_total: Decimal = ZERO,
-    debt_balance: Decimal = ZERO,
+    owed_products: Decimal = ZERO,
+    owed_loans: Decimal = ZERO,
+    period_commission: Decimal = ZERO,
+    payday: dt.date | None = None,
 ) -> str:
     """What the specialist made, and the arithmetic laid out so they can check it themselves.
 
     A figure that appears from nowhere is exactly the kind people dispute later, so the
     percentage is shown beside the amount it produced.
 
-    Products are reported and deliberately left out of the commission line — she sold them, and
-    they pay her nothing. What she owes is shown whole and NOT subtracted: the salon lets her
-    settle it whenever she likes, so taking it off today's figure would state a deduction that
-    has not happened.
+    THREE separations, and none of them is cosmetic. Tips are hers in full and are handed over
+    today, so they stand beside the commission rather than inside it. Products are reported and
+    left out of the commission line — she sold them and they pay her nothing. What she owes is
+    shown whole and NOT subtracted, because the salon lets her settle it whenever she likes and
+    taking it off would state a deduction nobody has made — split in two, because owing for a
+    drink and owing cash do not feel the same to be told you owe.
     """
     rows = [
         f"Hola {specialist_name}, así cerró tu día del {spanish_date(day)}.",
         "",
         f"Servicios: {rd(services_total)}",
         f"Tu comisión ({commission_pct}%): {rd(commission)}",
-        f"Propinas: {rd(tips)}",
+        f"Propinas (te las entregamos hoy): {rd(tips)}",
     ]
     if products_total > ZERO:
         rows.append(f"Productos vendidos: {rd(products_total)} (no generan comisión)")
-    rows += ["", f"Total para ti: {rd(commission + tips)}"]
-    if debt_balance > ZERO:
-        rows += ["", f"Lo que debes al salón: {rd(debt_balance)}"]
+    rows += ["", f"Total para ti hoy: {rd(commission + tips)}"]
+
+    if owed_products > ZERO or owed_loans > ZERO:
+        rows += ["", "Lo que debes al salón:"]
+        if owed_products > ZERO:
+            rows.append(f"• Consumo: {rd(owed_products)}")
+        if owed_loans > ZERO:
+            rows.append(f"• Préstamos: {rd(owed_loans)}")
+        rows.append(f"• Total: {rd(owed_products + owed_loans)}")
+
+    if payday is not None:
+        rows += [
+            "",
+            f"Acumulado para el pago del {spanish_date(payday)}: {rd(period_commission)}",
+        ]
     return "\n".join(rows)
 
 
@@ -199,3 +216,28 @@ def _line_rows(lines: Sequence[Line]) -> list[str]:
         else:
             rows.append(f"• {line.name} — {rd(line.line_total)}")
     return rows
+
+
+def render_register_prompt(
+    day: dt.date,
+    expected: dict[str, Decimal],
+    tips_owed: Sequence[tuple[str, Decimal]] = (),
+) -> str:
+    """What an owner is asked at closing: count these, and hand these over.
+
+    The expected figures are shown rather than withheld. A count made blind catches a miscount
+    and nothing else; a count made against a figure is a question about the difference, which is
+    the only thing worth asking.
+    """
+    rows = [
+        f"Cierre del {spanish_date(day)}. Cuadra la caja cuando puedas.",
+        "",
+        "Según lo registrado hoy debería haber:",
+        f"• Efectivo: {rd(expected['cash'])}",
+        f"• Banreservas: {rd(expected['banreservas'])}",
+        f"• BHD: {rd(expected['bhd'])}",
+    ]
+    if tips_owed:
+        rows += ["", "Propinas por entregar:"]
+        rows += [f"• {name} — {rd(amount)}" for name, amount in tips_owed]
+    return "\n".join(rows)

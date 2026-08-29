@@ -339,13 +339,13 @@ def test_the_day_counts_only_what_was_actually_paid(working):
     summary = tools.my_day(tool_context=context)["summary"]
     assert "Servicios: RD$300.00" in summary
     assert "Tu comisión (40%): RD$120.00" in summary
-    assert "Propinas: RD$200.00" in summary
-    assert "Total para ti: RD$320.00" in summary
+    assert "Propinas (te las entregamos hoy): RD$200.00" in summary
+    assert "Total para ti hoy: RD$320.00" in summary
 
 
 def test_a_specialist_with_no_sales_today_sees_zeroes(working):
     summary = tools.my_day(tool_context=working[0])["summary"]
-    assert "Servicios: RD$0.00" in summary and "Total para ti: RD$0.00" in summary
+    assert "Servicios: RD$0.00" in summary and "Total para ti hoy: RD$0.00" in summary
 
 
 # --- [6] Which client the ticket is priced for ----------------------------------------------
@@ -485,7 +485,7 @@ def test_paying_more_than_is_owed_is_refused(working):
 def test_what_she_owes_shows_on_her_day(working):
     context, _ = working
     tools.buy_product("agua", 1, tool_context=context)
-    assert "Lo que debes al salón: RD$15.00" in tools.my_day(tool_context=context)["summary"]
+    assert "• Consumo: RD$15.00" in tools.my_day(tool_context=context)["summary"]
 
 
 # --- [8] An owner, who is the one caller that can name somebody else -------------------------
@@ -655,7 +655,7 @@ def test_a_debt_recorded_by_the_owner_is_owed_by_the_specialist(owner, ctx, make
     answer = tools.buy_product("agua", 1, on_behalf_of="Zenaida", tool_context=owner)
     assert answer["balance"] == "RD$15.00"
     assert answer["owed_by"] == "Zenaida Prueba"
-    assert "Lo que debes al salón: RD$15.00" in tools.my_day(tool_context=ctx(her))["summary"]
+    assert "• Consumo: RD$15.00" in tools.my_day(tool_context=ctx(her))["summary"]
 
 
 # --- [10] A client who leaves owing -------------------------------------------------------------

@@ -818,6 +818,24 @@ def _client_ledger_row(
 # --- the end of the day -----------------------------------------------------
 
 
+def period_services(
+    conn: psycopg.Connection, specialist_id: int, start: dt.date, end: dt.date
+) -> Decimal:
+    """What she billed in services across a pay period, inclusive of both ends.
+
+    The base for what has accrued toward pay-day. Tips are not in it — they are handed over the
+    same evening, so there is nothing of them left to accumulate (§7).
+    """
+    row = fetchone(
+        conn,
+        "SELECT COALESCE(SUM(services_total), 0) AS total FROM sales "
+        "WHERE specialist_id = %(sid)s AND status = 'paid' "
+        "  AND business_date BETWEEN %(start)s AND %(end)s",
+        {"sid": specialist_id, "start": start, "end": end},
+    )
+    return row["total"] if row else ZERO_MONEY
+
+
 def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.date) -> dict:
     """What one specialist billed and was tipped on one day.
 
@@ -837,12 +855,32 @@ def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.d
           COALESCE((SELECT SUM(products_total) FROM sales
                     WHERE specialist_id = %(sid)s AND business_date = %(day)s
                       AND status = 'paid'), 0) AS products_total,
-          -- Her WHOLE outstanding balance, not this day's purchases: what she owes is what she
-          -- carries, and reporting only today's would read as if the rest were settled.
-          COALESCE((SELECT SUM(CASE WHEN kind = 'purchase' THEN amount ELSE -amount END)
-                    FROM specialist_ledger WHERE specialist_id = %(sid)s), 0) AS debt_balance
+          -- Her WHOLE outstanding balance, not this day's entries: what she owes is what she
+          -- carries, and reporting only today's would read as if the rest were settled. Split,
+          -- because owing for a drink and owing cash are told apart on her message (§7).
+          COALESCE((SELECT SUM(CASE WHEN kind = 'purchase' THEN amount
+                                    WHEN settles = 'purchase' THEN -amount ELSE 0 END)
+                    FROM specialist_ledger WHERE specialist_id = %(sid)s), 0) AS owed_products,
+          COALESCE((SELECT SUM(CASE WHEN kind = 'loan' THEN amount
+                                    WHEN settles = 'loan' THEN -amount ELSE 0 END)
+                    FROM specialist_ledger WHERE specialist_id = %(sid)s), 0) AS owed_loans
         """,
         {"sid": specialist_id, "day": business_date},
+    )
+
+
+def owners_with_a_channel(conn: psycopg.Connection) -> list[dict]:
+    """Every active owner the assistant can actually message. Who is asked to close the register."""
+    return fetchall(
+        conn,
+        """
+        SELECT sp.id, sp.full_name, sp.telegram_user_id
+        FROM specialists sp
+        JOIN specialist_roles sr ON sr.specialist_id = sp.id
+        JOIN roles r             ON r.id = sr.role_id
+        WHERE sp.active AND r.code = 'owner' AND sp.telegram_user_id IS NOT NULL
+        ORDER BY sp.id
+        """,
     )
 
 
@@ -869,7 +907,9 @@ def claim_summary(
     commission: Decimal,
     tips: Decimal,
     products_total: Decimal,
-    debt_balance: Decimal,
+    owed_products: Decimal,
+    owed_loans: Decimal,
+    period_commission: Decimal,
 ) -> bool:
     """Claim the right to send one specialist's end-of-day message. True when it is ours.
 
@@ -881,9 +921,9 @@ def claim_summary(
         cur.execute(
             "INSERT INTO daily_summaries "
             "  (specialist_id, business_date, services_total, commission, tips, "
-            "   products_total, debt_balance) "
+            "   products_total, owed_products, owed_loans, period_commission) "
             "VALUES (%(sid)s, %(day)s, %(services)s, %(commission)s, %(tips)s, "
-            "        %(products)s, %(debt)s) "
+            "        %(products)s, %(owed_p)s, %(owed_l)s, %(period)s) "
             "ON CONFLICT (specialist_id, business_date) DO NOTHING",
             {
                 "sid": specialist_id,
@@ -892,7 +932,9 @@ def claim_summary(
                 "commission": commission,
                 "tips": tips,
                 "products": products_total,
-                "debt": debt_balance,
+                "owed_p": owed_products,
+                "owed_l": owed_loans,
+                "period": period_commission,
             },
         )
         return cur.rowcount == 1

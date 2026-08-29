@@ -106,8 +106,8 @@ def test_the_message_carries_all_four_figures(sold, live, outbox):
     body = _mine(outbox, sold)[0]
     assert "Servicios: RD$300.00" in body
     assert f"Tu comisión ({config.COMMISSION_PCT}%): RD$120.00" in body
-    assert "Propinas: RD$200.00" in body
-    assert "Total para ti: RD$320.00" in body
+    assert "Propinas (te las entregamos hoy): RD$200.00" in body
+    assert "Total para ti hoy: RD$320.00" in body
 
 
 def test_the_message_and_my_day_cannot_disagree(sold, ctx, live, outbox):
@@ -206,3 +206,44 @@ def test_yesterday_is_a_separate_claim(sold, live, outbox, conn):
     yesterday = _today() - dt.timedelta(days=1)
     # Nobody billed yesterday, so nothing is sent — and the key does not collide either way.
     assert daily_summary.run(yesterday)["already_sent"] == 0
+
+
+# --- [4] Somebody with no way to receive it, and the register ----------------------------------
+
+
+def test_a_specialist_with_no_telegram_id_is_skipped_and_not_claimed(ctx, make_specialist, conn,
+                                                                     live, outbox):
+    """An owner records her work and she cannot receive anything yet. Claiming the day would mark
+    it reported forever, so the moment she has an id there would be nothing left to send."""
+    her = make_specialist("nails", full_name="Zenaida Sinclave", telegram_user_id=None)
+    owner = ctx(make_specialist(roles=("owner",), full_name="Zoila Dueña"))
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
+    tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
+    tools.record_payment("efectivo", "300", "0", on_behalf_of="Zenaida", tool_context=owner)
+
+    daily_summary.run(_today())
+
+    assert not _mine(outbox, her)
+    claimed = queries.fetchone(
+        conn,
+        "SELECT 1 FROM daily_summaries WHERE specialist_id = %(s)s AND business_date = %(d)s",
+        {"s": her["id"], "d": _today()},
+    )
+    assert claimed is None, "the day stays unclaimed until she can be reached"
+
+
+def test_the_owners_are_asked_to_count_the_register(ctx, make_specialist, sold, live, outbox):
+    her = make_specialist(roles=("owner",), full_name="Zoila Dueña")
+    daily_summary.run(_today())
+    asked = [body for chat, body in outbox if chat == her["telegram_user_id"]]
+    assert asked and "Cuadra la caja" in asked[0]
+    assert "Efectivo: RD$500.00" in asked[0], "300 taken plus the 200 tipped, still in the drawer"
+    assert f"{sold['full_name']} — RD$200.00" in asked[0], "and what to hand over"
+
+
+def test_nobody_is_asked_once_the_register_is_closed(ctx, make_specialist, sold, live, outbox):
+    """The already-closed check is the real state rather than a record of having asked."""
+    her = make_specialist(roles=("owner",), full_name="Zoila Dueña")
+    tools.close_register("500", "0", "0", tool_context=ctx(her))
+    daily_summary.run(_today())
+    assert not [body for chat, body in outbox if chat == her["telegram_user_id"]]

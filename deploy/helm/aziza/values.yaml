@@ -95,8 +95,13 @@ dbBuild:
 # The end-of-day message each specialist who billed that day receives.
 summary:
   enabled: true
-  # 21:00 in the salon's own timezone, which the CronJob declares rather than converting.
-  schedule: "0 21 * * *"
+  # One entry per closing time, each an hour after the salon shuts — which is exactly when the
+  # grace window in aziza_adk/hours.py closes, so nothing more can arrive after the message goes
+  # out. Tue–Fri close at 19:00 and Saturday at 18:00; Sunday and Monday the salon is shut and
+  # there is nobody to report a day to.
+  schedules:
+    - "0 20 * * 2-5"
+    - "0 19 * * 6"
   # `simulate` logs what would be sent and WRITES NO CLAIM, so a dry run cannot mark a day as
   # already reported. `live` holds only while every specialist the seed registers carries a real
   # Telegram id (aziza_adk/staff_data.py) — an invented one attempts a send no account receives.
