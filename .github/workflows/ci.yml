@@ -8,6 +8,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # Branch protection requires Quality and Test on a pull request, and a workflow that only
+  # triggers on push can never report them — so every PR blocks. `image` and `deploy` are guarded
+  # on `refs/heads/main`, which a pull_request event never matches, so neither runs here.
+  pull_request:
+    branches: [main]
   # Weekly, because what a run resolves moves without a commit here: the agent-platform tags
   # requirements.txt installs from, and the runner image.
   schedule:
