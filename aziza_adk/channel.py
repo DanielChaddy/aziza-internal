@@ -40,6 +40,9 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # These four reach a specialist with NO model in the path, so the register is fixed at the
 # literal. `tests/test_voice.py` gates them by their names — docs/BRAND_VOICE.md.
 FALLBACK_TEXT = "Se me complicó procesar eso. Inténtalo de nuevo en un momento."
+QUOTA_EXHAUSTED_TEXT = (
+    "Llegué al límite de uso por hoy y no puedo registrar nada más. Avísale a la administración."
+)
 NOT_REGISTERED_TEXT = tools.NOT_REGISTERED_MSG
 MEDIA_REFUSED_TEXT = (
     "No puedo leer fotos. Escríbeme o mándame una nota de voz con lo que le hiciste a la clienta."
@@ -104,16 +107,44 @@ async def _session_for(runner, user_id: str, who: dict):
     return found
 
 
+#: HTTP status the model API answers a spent quota with.
+_QUOTA_STATUS = 429
+
+
+def _is_quota_exhausted(exc: BaseException) -> bool:
+    """Whether this turn failed because the day's model quota is spent.
+
+    Read off `code` rather than the message, which is the provider's prose and not ours. The chain
+    is walked because ADK re-raises the SDK's error wrapped in its own, and both carry the status.
+    """
+    seen: BaseException | None = exc
+    while seen is not None:
+        if getattr(seen, "code", None) == _QUOTA_STATUS:
+            return True
+        seen = seen.__cause__
+    return False
+
+
 async def run_turn(user_id: str, who: dict, text: str) -> str:
     """Drive one specialist's turn through the production Runner."""
     runner = runtime.get_runner()
     await _session_for(runner, user_id, who)
     message = types.Content(role="user", parts=[types.Part(text=text)])
     chunks: list[str] = []
-    async for event in runner.run_async(user_id=user_id, session_id=user_id, new_message=message):
-        if event.is_final_response() and event.content and event.content.parts:
-            if reply := event.content.parts[0].text:
-                chunks.append(reply)
+    try:
+        async for event in runner.run_async(
+            user_id=user_id, session_id=user_id, new_message=message
+        ):
+            if event.is_final_response() and event.content and event.content.parts:
+                if reply := event.content.parts[0].text:
+                    chunks.append(reply)
+    except Exception as exc:
+        # A spent quota does not recover in a moment, so FALLBACK_TEXT's "inténtalo de nuevo"
+        # would send her round the same wall until the day rolls over.
+        if not _is_quota_exhausted(exc):
+            raise
+        logger.warning("turn refused: model quota exhausted")
+        return QUOTA_EXHAUSTED_TEXT
     return " ".join(chunks).strip()
 
 
