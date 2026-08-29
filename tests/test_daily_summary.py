@@ -211,8 +211,9 @@ def test_yesterday_is_a_separate_claim(sold, live, outbox, conn):
 # --- [4] Somebody with no way to receive it, and the register ----------------------------------
 
 
-def test_a_specialist_with_no_telegram_id_is_skipped_and_not_claimed(ctx, make_specialist, conn,
-                                                                     live, outbox):
+def test_a_specialist_with_no_telegram_id_is_skipped_and_not_claimed(
+    ctx, make_specialist, conn, live, outbox
+):
     """An owner records her work and she cannot receive anything yet. Claiming the day would mark
     it reported forever, so the moment she has an id there would be nothing left to send."""
     her = make_specialist("nails", full_name="Zenaida Sinclave", telegram_user_id=None)
