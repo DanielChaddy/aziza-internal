@@ -19,6 +19,7 @@ from psycopg.rows import dict_row
 
 from aziza_adk import config
 from aziza_adk.catalog import Product, Service
+from aziza_adk.money import ZERO as ZERO_MONEY
 from aziza_adk.receipts import Line, Payment
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
@@ -472,16 +473,22 @@ def record_settlement(
     business_date: dt.date,
     description: str,
     recorded_by: int,
+    settles: str,
+    method: str,
 ) -> None:
-    """Credit a payment against what she owes. Partial is ordinary, not an exception."""
+    """Credit a payment against one of what she owes. Partial is ordinary, not an exception."""
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO specialist_ledger "
-            "  (specialist_id, recorded_by, kind, description, amount, business_date) "
-            "VALUES (%(sid)s, %(by)s, 'payment', %(desc)s, %(amount)s, %(day)s)",
+            "  (specialist_id, recorded_by, kind, settles, method, description, amount, "
+            "   business_date) "
+            "VALUES (%(sid)s, %(by)s, 'payment', %(settles)s, %(method)s, %(desc)s, %(amount)s, "
+            "        %(day)s)",
             {
                 "sid": specialist_id,
                 "by": recorded_by,
+                "settles": settles,
+                "method": method,
                 "desc": description,
                 "amount": amount,
                 "day": business_date,
@@ -490,15 +497,157 @@ def record_settlement(
     conn.commit()
 
 
-def debt_balance(conn: psycopg.Connection, specialist_id: int) -> Decimal:
-    """Everything she owes right now. Derived from the ledger, never stored."""
+def record_loan(
+    conn: psycopg.Connection,
+    specialist_id: int,
+    amount: Decimal,
+    business_date: dt.date,
+    description: str,
+    recorded_by: int,
+    method: str,
+) -> None:
+    """Money out of the register and into her hand. A debit like a purchase, and kept apart from
+    one because owing for a drink and owing cash are not the same thing to be told you owe."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO specialist_ledger "
+            "  (specialist_id, recorded_by, kind, method, description, amount, business_date) "
+            "VALUES (%(sid)s, %(by)s, 'loan', %(method)s, %(desc)s, %(amount)s, %(day)s)",
+            {
+                "sid": specialist_id,
+                "by": recorded_by,
+                "method": method,
+                "desc": description,
+                "amount": amount,
+                "day": business_date,
+            },
+        )
+    conn.commit()
+
+
+def debt_balances(conn: psycopg.Connection, specialist_id: int) -> dict[str, Decimal]:
+    """What she owes, split the way she is told it: `purchase`, `loan`, and their `total`.
+
+    A payment reduces the one it names, which is why `settles` exists — reported gross the two
+    would only ever grow, and a part payment would have to belong to both.
+    """
     row = fetchone(
         conn,
-        "SELECT COALESCE(SUM(CASE WHEN kind = 'purchase' THEN amount ELSE -amount END), 0) "
-        "  AS balance FROM specialist_ledger WHERE specialist_id = %(sid)s",
+        """
+        SELECT COALESCE(SUM(CASE WHEN kind = 'purchase' THEN amount
+                                 WHEN settles = 'purchase' THEN -amount ELSE 0 END), 0) AS purchase,
+               COALESCE(SUM(CASE WHEN kind = 'loan' THEN amount
+                                 WHEN settles = 'loan' THEN -amount ELSE 0 END), 0) AS loan
+        FROM specialist_ledger WHERE specialist_id = %(sid)s
+        """,
         {"sid": specialist_id},
     )
-    return row["balance"] if row else Decimal("0.00")
+    purchase = row["purchase"] if row else Decimal("0.00")
+    loan = row["loan"] if row else Decimal("0.00")
+    return {"purchase": purchase, "loan": loan, "total": purchase + loan}
+
+
+def debt_balance(conn: psycopg.Connection, specialist_id: int) -> Decimal:
+    """Everything she owes right now. Derived from the ledger, never stored."""
+    return debt_balances(conn, specialist_id)["total"]
+
+
+# --- the register ------------------------------------------------------------
+
+
+def open_tickets(conn: psycopg.Connection) -> list[dict]:
+    """Every ticket still open, with whose it is. What stops the register being closed early."""
+    return fetchall(
+        conn,
+        "SELECT s.client_name, sp.full_name FROM sales s "
+        "JOIN specialists sp ON sp.id = s.specialist_id "
+        "WHERE s.status = 'open' ORDER BY sp.full_name",
+    )
+
+
+def expected_register(conn: psycopg.Connection, day: dt.date) -> dict[str, Decimal]:
+    """What each account should hold at the end of `day`, by the entries alone.
+
+    `amount + tip`, and NOT minus the change: `amount` is what the ticket received, so a note
+    handed over and its change are already netted there. A reader expecting `change_given` to be
+    subtracted would double-count it — which is why that column is reported and never summed here.
+
+    Cash tips are in the drawer until they are handed over at the end of the day, so they are part
+    of what the count should find (§7).
+    """
+    totals = {"cash": ZERO_MONEY, "banreservas": ZERO_MONEY, "bhd": ZERO_MONEY}
+    rows = fetchall(
+        conn,
+        """
+        SELECT method, SUM(delta) AS delta FROM (
+            SELECT p.method, p.amount + p.tip AS delta
+              FROM sale_payments p JOIN sales s ON s.id = p.sale_id
+             WHERE s.business_date = %(day)s AND s.status IN ('paid', 'partial')
+            UNION ALL
+            SELECT method, amount FROM client_ledger
+             WHERE business_date = %(day)s AND kind = 'payment'
+            UNION ALL
+            SELECT method, CASE WHEN kind = 'loan' THEN -amount ELSE amount END
+              FROM specialist_ledger
+             WHERE business_date = %(day)s AND kind IN ('loan', 'payment')
+        ) moves GROUP BY method
+        """,
+        {"day": day},
+    )
+    for row in rows:
+        totals[row["method"]] = row["delta"]
+    return totals
+
+
+def tips_owed(conn: psycopg.Connection, day: dt.date) -> list[dict]:
+    """What each specialist is handed at the end of `day`. Hers in full, and paid out of the
+    drawer the count is measured against — so it is reported beside the close, not deducted."""
+    return fetchall(
+        conn,
+        """
+        SELECT sp.full_name, SUM(p.tip) AS tips
+          FROM sale_payments p
+          JOIN sales s       ON s.id = p.sale_id
+          JOIN specialists sp ON sp.id = s.specialist_id
+         WHERE s.business_date = %(day)s AND p.tip > 0
+         GROUP BY sp.full_name ORDER BY sp.full_name
+        """,
+        {"day": day},
+    )
+
+
+def register_close_for(conn: psycopg.Connection, day: dt.date) -> dict | None:
+    return fetchone(
+        conn, "SELECT * FROM register_closes WHERE business_date = %(day)s", {"day": day}
+    )
+
+
+def record_register_close(
+    conn: psycopg.Connection,
+    day: dt.date,
+    closed_by: int,
+    counted: dict[str, Decimal],
+    expected: dict[str, Decimal],
+) -> None:
+    """Both figures, and never the difference: see the table."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO register_closes "
+            "  (business_date, closed_by, counted_cash, counted_banreservas, counted_bhd, "
+            "   expected_cash, expected_banreservas, expected_bhd) "
+            "VALUES (%(day)s, %(by)s, %(cc)s, %(cb)s, %(ch)s, %(ec)s, %(eb)s, %(eh)s)",
+            {
+                "day": day,
+                "by": closed_by,
+                "cc": counted["cash"],
+                "cb": counted["banreservas"],
+                "ch": counted["bhd"],
+                "ec": expected["cash"],
+                "eb": expected["banreservas"],
+                "eh": expected["bhd"],
+            },
+        )
+    conn.commit()
 
 
 def void_sale(conn: psycopg.Connection, sale_id: int) -> None:

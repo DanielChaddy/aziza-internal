@@ -39,8 +39,13 @@ AFTER_HOURS_TOOL_NAMES = frozenset(
         "close_ticket_with_debt",
         "settle_client_debt",
         "buy_product",
+        "record_loan",
     }
 )
+
+#: What only an owner may do at all, at any hour. `guards.before_tool_guard` refuses these for
+#: anyone else; the bodies re-check, as they do for `on_behalf_of`.
+OWNER_TOOL_NAMES = frozenset({"close_register", "record_loan", "salon_day"})
 
 #: Every tool needs a registered specialist behind it. `guards.before_tool_guard` refuses each of
 #: them without one; the bodies re-check.
@@ -58,6 +63,9 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "buy_product",
         "settle_debt",
         "my_day",
+        "close_register",
+        "record_loan",
+        "salon_day",
     }
 )
 
@@ -116,6 +124,10 @@ AFTER_HOURS_MSG = "Fuera del horario del salón esto solo lo registra una dueña
 BAD_EXTRA_MSG = "¿Ese excedente es propina o hay que darle el vuelto?"
 NOTHING_OWED_MSG = "Esa clienta no debe nada."
 NOTHING_OUTSTANDING_MSG = "Esa cuenta ya está saldada. No queda nada por cobrar."
+OWNER_ONLY_MSG = "Eso lo hace una dueña."
+BAD_OWES_MSG = "¿Eso es de productos o del préstamo?"
+REGISTER_CLOSED_MSG = "La caja de hoy ya está cerrada."
+TICKETS_STILL_OPEN_MSG = "Todavía hay cuentas abiertas. Ciérralas antes de cuadrar la caja."
 OVERPAID_DEBT_MSG = "Eso es más de lo que debe. Cóbrale {balance} y quedan en cero."
 NEED_SPECIALIST_MSG = "Dime cuál especialista lo hizo y lo registro a su nombre."
 UNKNOWN_SPECIALIST_MSG = "No tengo a esa especialista en el salón."
@@ -149,6 +161,18 @@ _METHODS = {
     "banco de reservas": "banreservas",
     "bhd": "bhd",
     "banco bhd": "bhd",
+}
+
+#: Which of the two balances a payment pays down. Named rather than inferred: paying part of
+#: what she owes has to say which part, or the two figures on her message stop meaning anything.
+_OWES = {
+    "productos": "purchase",
+    "producto": "purchase",
+    "consumo": "purchase",
+    "prestamo": "loan",
+    "prestamos": "loan",
+    "dinero": "loan",
+    "efectivo prestado": "loan",
 }
 
 #: What she means by "keep it" or "give it back", when the amount handed over is more than the
@@ -189,6 +213,13 @@ def _today() -> dt.date:
     """The salon's own date. A night that runs past midnight still belongs to the day it began;
     rolling this on `hours.SCHEDULE` rather than on midnight is its own change."""
     return now().date()
+
+
+def _owner_only(tool_context: Any) -> dict | None:
+    """Defense in depth, exactly as `_unauthorized` is: the guard already refused."""
+    if not session.is_owner(tool_context):
+        return {"error": "owner_only", "message": OWNER_ONLY_MSG}
+    return None
 
 
 def _unauthorized(tool_context: Any) -> dict | None:
@@ -937,13 +968,22 @@ def buy_product(
         return _failed(exc)
 
 
-def settle_debt(amount: str, on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
+def settle_debt(
+    amount: str,
+    owes: str,
+    method: str,
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
     """Record a payment the specialist made against what she owes the salon.
 
     Part of it is ordinary rather than an exception — she may pay some now and carry the rest.
 
     Args:
         amount: What she paid, in numbers.
+        owes: Which of the two she is paying: "productos" or "préstamo". She owes them
+            separately and a payment has to name one.
+        method: efectivo, Banreservas or BHD, in her own words.
         on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
             work this is, in her own words. An ordinary specialist leaves it empty.
 
@@ -953,6 +993,12 @@ def settle_debt(amount: str, on_behalf_of: str = "", tool_context: ToolContext =
     """
     if (refused := _unauthorized(tool_context)) is not None:
         return refused
+    kind = _OWES.get(fold(owes or "").strip())
+    if kind is None:
+        return {"error": "bad_owes", "message": BAD_OWES_MSG}
+    canonical = _METHODS.get(fold(method or "").strip())
+    if canonical is None:
+        return {"error": "bad_method", "message": BAD_METHOD_MSG}
     try:
         paid = money.money(amount)
     except ValueError:
@@ -965,7 +1011,7 @@ def settle_debt(amount: str, on_behalf_of: str = "", tool_context: ToolContext =
             if refused is not None:
                 return refused
             who = person.specialist_id
-            owed = queries.debt_balance(conn, who)
+            owed = queries.debt_balances(conn, who)[kind]
             if owed <= ZERO:
                 return {"error": "nothing_owed", "message": NOTHING_OWED_MSG}
             if paid > owed:
@@ -982,12 +1028,178 @@ def settle_debt(amount: str, on_behalf_of: str = "", tool_context: ToolContext =
                 paid,
                 _today(),
                 "Pago a cuenta",
+                settles=kind,
+                method=canonical,
                 recorded_by=session.specialist_id(tool_context),
             )
             return {
                 "paid": money.rd(paid),
                 "owed_by": person.name,
                 "balance": money.rd(queries.debt_balance(conn, who)),
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def record_loan(
+    specialist: str,
+    amount: str,
+    method: str,
+    tool_context: ToolContext = None,
+) -> dict:
+    """Record money taken out of the register and handed to a specialist. Owners only.
+
+    A debit against her like a product she took, and kept apart from one: owing for a drink and
+    owing cash are not the same thing to be told you owe.
+
+    Args:
+        specialist: Whose it is, in the owner's own words.
+        amount: How much, in numbers.
+        method: How it left — efectivo, Banreservas or BHD.
+
+    Returns:
+        {"lent": str, "owed_by": str, "loans": str} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    canonical = _METHODS.get(fold(method or "").strip())
+    if canonical is None:
+        return {"error": "bad_method", "message": BAD_METHOD_MSG}
+    try:
+        lent = money.money(amount)
+    except ValueError:
+        return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+    if lent <= ZERO:
+        return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+    try:
+        with queries.connect() as conn:
+            # Named rather than defaulted, exactly as work is: a loan booked to the wrong person
+            # is money the salon will ask the wrong person for.
+            person, refused = _acting(conn, tool_context, specialist)
+            if refused is not None:
+                return refused
+            queries.record_loan(
+                conn,
+                person.specialist_id,
+                lent,
+                _today(),
+                "Préstamo",
+                recorded_by=session.specialist_id(tool_context),
+                method=canonical,
+            )
+            return {
+                "lent": money.rd(lent),
+                "owed_by": person.name,
+                "loans": money.rd(queries.debt_balances(conn, person.specialist_id)["loan"]),
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def close_register(
+    cash: str,
+    banreservas: str,
+    bhd: str,
+    tool_context: ToolContext = None,
+) -> dict:
+    """Record what each account actually holds at the end of the day, against what it should.
+    Owners only.
+
+    Counted and expected are both kept and the difference is not: recomputing the expectation
+    later would absorb anything entered afterwards, which is the one thing this exists to catch.
+
+    Args:
+        cash: What is in the drawer, counted, in numbers.
+        banreservas: What Banreservas received today, in numbers.
+        bhd: What BHD received today, in numbers.
+
+    Returns:
+        {"closed": true, "counted": {...}, "expected": {...}, "variance": {...},
+        "tips_to_pay": [...]} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    counted: dict[str, Decimal] = {}
+    for account, raw in (("cash", cash), ("banreservas", banreservas), ("bhd", bhd)):
+        try:
+            counted[account] = money.money(raw)
+        except ValueError:
+            return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+        if counted[account] < ZERO:
+            return {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+
+    day = _today()
+    try:
+        with queries.connect() as conn:
+            if queries.register_close_for(conn, day) is not None:
+                return {"error": "already_closed", "message": REGISTER_CLOSED_MSG}
+            # A ticket still open is money not yet taken, so the count would be measured against
+            # an expectation that is not finished. Named, so it can be acted on.
+            if still_open := queries.open_tickets(conn):
+                return {
+                    "error": "tickets_open",
+                    "message": TICKETS_STILL_OPEN_MSG,
+                    "open": [f"{t['full_name']} — {t['client_name']}" for t in still_open],
+                }
+            expected = queries.expected_register(conn, day)
+            queries.record_register_close(
+                conn, day, session.specialist_id(tool_context), counted, expected
+            )
+            tips = queries.tips_owed(conn, day)
+            return {
+                "closed": True,
+                "counted": {k: money.rd(v) for k, v in counted.items()},
+                "expected": {k: money.rd(v) for k, v in expected.items()},
+                "variance": {k: money.rd(counted[k] - expected[k]) for k in counted},
+                # Hers in full, and paid out of the drawer that was just counted — so it is
+                # reported beside the close rather than taken off it.
+                "tips_to_pay": [f"{t['full_name']} — {money.rd(t['tips'])}" for t in tips],
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def salon_day(tool_context: ToolContext = None) -> dict:
+    """What the whole salon did today, specialist by specialist. Owners only.
+
+    Args:
+        None.
+
+    Returns:
+        {"day": str, "by_specialist": [...], "services_total": str, "expected": {...}} or
+        {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    day = _today()
+    try:
+        with queries.connect() as conn:
+            rows = []
+            total = ZERO
+            for who in queries.working_specialists(conn):
+                figures = queries.day_totals(conn, who["id"], day)
+                if figures["services_total"] <= ZERO and figures["tips"] <= ZERO:
+                    continue
+                total += figures["services_total"]
+                rows.append(
+                    f"{who['full_name']} — {money.rd(figures['services_total'])} "
+                    f"(comisión {
+                        money.rd(money.commission(figures['services_total'], config.COMMISSION_PCT))
+                    }, propinas {money.rd(figures['tips'])})"
+                )
+            return {
+                "day": receipts.spanish_date(day),
+                "by_specialist": rows,
+                "services_total": money.rd(total),
+                "expected": {
+                    k: money.rd(v) for k, v in queries.expected_register(conn, day).items()
+                },
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)

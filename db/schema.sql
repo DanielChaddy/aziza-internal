@@ -219,10 +219,23 @@ CREATE INDEX IF NOT EXISTS ix_sale_product_lines_sale ON sale_product_lines (sal
 CREATE TABLE IF NOT EXISTS specialist_ledger (
     id            SERIAL PRIMARY KEY,
     specialist_id INTEGER NOT NULL REFERENCES specialists (id) ON DELETE CASCADE,
-    kind          TEXT NOT NULL CHECK (kind IN ('purchase', 'payment')),
+    -- What she took, and it is two different things: a 'purchase' is a product off the shelf, a
+    -- 'loan' is money out of the register. She is told them apart on her end-of-day message
+    -- because they feel different to owe (§7).
+    kind          TEXT NOT NULL CHECK (kind IN ('purchase', 'loan', 'payment')),
+    -- Which of the two a payment pays down. NULL on a debit, where `kind` already says. Without
+    -- it the two balances could only be reported gross, and a part payment would belong to both.
+    settles       TEXT CHECK (settles IN ('purchase', 'loan')),
+    CHECK ((kind = 'payment') = (settles IS NOT NULL)),
+    -- Which account the money moved through. NULL on a purchase, where nothing moves: she took a
+    -- product, and the register is no lighter for it. A loan empties the drawer and a payment
+    -- fills it, so the register cannot be reconciled without this.
+    method        TEXT CHECK (method IN ('cash', 'banreservas', 'bhd')),
+    CHECK ((kind = 'purchase') = (method IS NULL)),
     -- As on sales: whose debt it is above, who entered it here.
     recorded_by   INTEGER NOT NULL REFERENCES specialists (id),
-    -- Set on a purchase, null on a payment: a payment is against the balance, not against an item.
+    -- Set on a purchase, null otherwise: a payment is against the balance, not against an item,
+    -- and a loan was never an item at all.
     product_id    INTEGER REFERENCES products (id),
     description   TEXT NOT NULL,
     -- Always positive. `kind` carries the sign, so a row cannot be entered with the wrong one.
@@ -257,6 +270,26 @@ CREATE TABLE IF NOT EXISTS client_ledger (
 );
 
 CREATE INDEX IF NOT EXISTS ix_client_ledger_client ON client_ledger (client_id, business_date);
+
+-- What the register held at the end of a day, against what the day's entries say it should have.
+--
+-- Both are stored and the variance is NOT: `counted` is a fact about a drawer at a moment, and
+-- `expected` is a SNAPSHOT of what the entries said at that same moment. Recomputing the
+-- expectation later would quietly absorb anything entered afterwards, which is the one thing a
+-- reconciliation exists to catch (§7).
+CREATE TABLE IF NOT EXISTS register_closes (
+    id                   SERIAL PRIMARY KEY,
+    -- One per day. Closing twice is refused rather than recorded as two opinions.
+    business_date        DATE NOT NULL UNIQUE,
+    closed_by            INTEGER NOT NULL REFERENCES specialists (id),
+    counted_cash         NUMERIC(12, 2) NOT NULL CHECK (counted_cash >= 0),
+    counted_banreservas  NUMERIC(12, 2) NOT NULL CHECK (counted_banreservas >= 0),
+    counted_bhd          NUMERIC(12, 2) NOT NULL CHECK (counted_bhd >= 0),
+    expected_cash        NUMERIC(12, 2) NOT NULL,
+    expected_banreservas NUMERIC(12, 2) NOT NULL,
+    expected_bhd         NUMERIC(12, 2) NOT NULL,
+    closed_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS daily_summaries (
     id             SERIAL PRIMARY KEY,

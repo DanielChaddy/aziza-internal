@@ -72,6 +72,8 @@ def before_tool_guard(tool: Any, args: dict, tool_context: Any) -> dict | None:
         return _blocked("not_registered", tools.NOT_REGISTERED_MSG, name)
     if str((args or {}).get("on_behalf_of") or "").strip() and not session.is_owner(tool_context):
         return _blocked("not_an_owner", tools.NOT_AN_OWNER_MSG, name)
+    if name in tools.OWNER_TOOL_NAMES and not session.is_owner(tool_context):
+        return _blocked("owner_only", tools.OWNER_ONLY_MSG, name)
     # An owner is trusted with the hours as she is trusted with whose work it is: both are the
     # same widening, and both are read off the row the edge resolved.
     if name in tools.AFTER_HOURS_TOOL_NAMES and not session.is_owner(tool_context):
