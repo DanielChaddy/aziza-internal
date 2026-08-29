@@ -13,6 +13,18 @@ voice is [`docs/BRAND_VOICE.md`](docs/BRAND_VOICE.md), and how to run it is the 
 [`README.md`](README.md). Read the design document before changing the schema, the tools or the
 guards; read the voice document before writing a single Spanish string.
 
+## In development
+
+**This project is IN DEVELOPMENT, and its databases are disposable.** `dev-db-pgsql` is a test
+database in a shared environment: nothing in `aziza` or `aziza_sessions` is the salon's record of
+anything yet, and what is there is somebody exercising the assistant. So a schema change is
+applied by dropping and rebuilding rather than by migrating in place — `db/schema.sql` states the
+shape it wants and carries no `ALTER`, and the rebuild in
+[`deploy/helm/README.md`](deploy/helm/README.md) needs no permission first.
+
+This is the one thing in this file with an end date, and the date is not set. Until it is lifted,
+do not describe that database as production, and do not let a row in it stop a change.
+
 ## The trap
 
 **The user is a specialist, not a client.** Every sibling assistant answers the person being
