@@ -28,6 +28,8 @@ SALES_SPEC = AgentSpec(
         tools.show_ticket,
         tools.void_ticket,
         tools.record_payment,
+        tools.close_ticket_with_debt,
+        tools.settle_client_debt,
         tools.buy_product,
         tools.settle_debt,
         tools.my_day,

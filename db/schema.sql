@@ -80,6 +80,25 @@ CREATE TABLE IF NOT EXISTS services (
 
 CREATE INDEX IF NOT EXISTS ix_services_discipline ON services (discipline_id);
 
+-- Who owes what, and for how long. A ticket carries `client_name` as a SNAPSHOT of what the
+-- specialist said; this is the person that name referred to, so a balance can outlive the ticket
+-- that created it and be found again on her next visit (§7).
+--
+-- `phone` is what will eventually tell two people called Carmen apart. Until something asks for
+-- one, a name is matched folded and a second Carmen shares the first one's row — which is why
+-- the column exists now and the ambiguity is written down rather than discovered.
+CREATE TABLE IF NOT EXISTS clients (
+    id         SERIAL PRIMARY KEY,
+    client_ref TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL,
+    -- Accent- and case-folded, so "MARÍA" and "maria" are one person. Written by the app rather
+    -- than by the database, because the fold is `conversation_core.fold` and one implementation
+    -- of it is the whole point.
+    folded     TEXT NOT NULL UNIQUE,
+    phone      TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS sales (
     id             SERIAL PRIMARY KEY,
     sale_ref       TEXT NOT NULL UNIQUE,
@@ -89,6 +108,9 @@ CREATE TABLE IF NOT EXISTS sales (
     -- set, never NULL: a magic absence would make "she entered it" and "we lost track" the same
     -- row, and this is the audit trail for money paid to a person (§3).
     recorded_by    INTEGER NOT NULL REFERENCES specialists (id),
+    -- The person, as against `client_name` which is the words the specialist used. Both, for the
+    -- same reason `sale_lines` keeps a service_name beside a service_id (§4).
+    client_id      INTEGER REFERENCES clients (id),
     client_name    TEXT NOT NULL,
     -- WHICH price column every line on this ticket reads (§5). Set when the ticket opens and
     -- re-priced if it changes, so a line can never disagree with the ticket it belongs to.
@@ -98,8 +120,11 @@ CREATE TABLE IF NOT EXISTS sales (
     -- recognized, so the female column was applied and the specialist is told (aziza_adk/names.py).
     gender_source  TEXT NOT NULL DEFAULT 'defaulted'
                    CHECK (gender_source IN ('stated', 'matched', 'defaulted')),
+    -- 'partial' is CLOSED with a balance outstanding. It has to be a closing state: one open
+    -- ticket per specialist is enforced below, so a client who leaves owing would otherwise stop
+    -- her serving anybody else (§7).
     status         TEXT NOT NULL DEFAULT 'open'
-                   CHECK (status IN ('open', 'paid', 'void')),
+                   CHECK (status IN ('open', 'paid', 'partial', 'void')),
     services_total NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (services_total >= 0),
     -- Kept apart from services_total and never added into it: commission is taken on work, and a
     -- product pays none (§7).
@@ -140,11 +165,16 @@ CREATE INDEX IF NOT EXISTS ix_sale_lines_sale ON sale_lines (sale_id);
 CREATE TABLE IF NOT EXISTS sale_payments (
     id          SERIAL PRIMARY KEY,
     sale_id     INTEGER NOT NULL REFERENCES sales (id) ON DELETE CASCADE,
-    method      TEXT NOT NULL CHECK (method IN ('cash', 'card', 'transfer')),
+    -- The salon's actual accounts, named rather than typed: 'transfer' could not say WHICH bank
+    -- received it, and the register cannot be reconciled against a total nobody can attribute.
+    method      TEXT NOT NULL CHECK (method IN ('cash', 'banreservas', 'bhd')),
     amount      NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
     -- The tip rides on the payment that carried it and is NOT part of `amount`: commission is
     -- taken on services alone, and a tip folded into the total would be taxed at 40% (§7).
     tip         NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (tip >= 0),
+    -- Handed back out of the drawer, so it is neither a payment nor a tip. `amount` is what the
+    -- TICKET received; this is what left with the client, and the register is short by it (§7).
+    change_given NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (change_given >= 0),
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -203,6 +233,30 @@ CREATE TABLE IF NOT EXISTS specialist_ledger (
 
 CREATE INDEX IF NOT EXISTS ix_specialist_ledger_specialist
     ON specialist_ledger (specialist_id, business_date);
+
+-- What a CLIENT owes the salon and what she has paid against it. The same shape as
+-- `specialist_ledger` and for the same reason: the balance is SUM(debt) - SUM(payment), never
+-- stored, so a part payment needs no new column and cannot disagree with its own history.
+CREATE TABLE IF NOT EXISTS client_ledger (
+    id            SERIAL PRIMARY KEY,
+    client_id     INTEGER NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+    -- Set on a debt, null on a payment: a payment is against the balance, not against a ticket.
+    sale_id       INTEGER REFERENCES sales (id),
+    kind          TEXT NOT NULL CHECK (kind IN ('debt', 'payment')),
+    -- Which account received it. NULL on a debt, which is money that moved nowhere. Without this
+    -- a settlement paid days later is invisible to the register it actually landed in.
+    method        TEXT CHECK (method IN ('cash', 'banreservas', 'bhd')),
+    CHECK ((kind = 'payment') = (method IS NOT NULL)),
+    -- Whose entry this is. A debt belongs to the ticket's specialist; a payment to whoever took
+    -- it, who is often not the same person on a later day.
+    recorded_by   INTEGER NOT NULL REFERENCES specialists (id),
+    -- Always positive. `kind` carries the sign, so a row cannot be entered with the wrong one.
+    amount        NUMERIC(12, 2) NOT NULL CHECK (amount > 0),
+    business_date DATE NOT NULL,
+    recorded_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS ix_client_ledger_client ON client_ledger (client_id, business_date);
 
 CREATE TABLE IF NOT EXISTS daily_summaries (
     id             SERIAL PRIMARY KEY,

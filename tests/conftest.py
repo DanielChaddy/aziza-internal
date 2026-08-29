@@ -78,6 +78,14 @@ def sentinel(conn):
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
                 {"prefix": SENTINEL_REF + "%"},
             )
+            # Before the sales they point at: `client_ledger.sale_id` has no ON DELETE action,
+            # deliberately, because in the salon a sale is never deleted at all.
+            cur.execute(
+                f"DELETE FROM client_ledger WHERE recorded_by IN {sentinels} OR sale_id IN "
+                f"  (SELECT id FROM sales WHERE specialist_id IN {sentinels} "
+                f"                           OR recorded_by IN {sentinels})",
+                {"prefix": SENTINEL_REF + "%"},
+            )
             cur.execute(
                 f"DELETE FROM sales "
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
@@ -86,6 +94,14 @@ def sentinel(conn):
             cur.execute(
                 "DELETE FROM specialists WHERE specialist_ref LIKE %(prefix)s",
                 {"prefix": SENTINEL_REF + "%"},
+            )
+            # A client the tests invented, recognised by nothing pointing at her rather than by a
+            # prefix — she is named the way a real one is. Left behind she would carry a balance
+            # into the next run, and "Laura owes nothing" is a case this suite asserts.
+            cur.execute(
+                "DELETE FROM clients c WHERE NOT EXISTS "
+                "  (SELECT 1 FROM sales s WHERE s.client_id = c.id) "
+                "AND NOT EXISTS (SELECT 1 FROM client_ledger l WHERE l.client_id = c.id)"
             )
 
     clean()
