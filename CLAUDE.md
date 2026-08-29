@@ -2,14 +2,14 @@
 
 Guidance for working in this repository. The shared rules — tiers, documents, naming, comments —
 are `agent-platform/CLAUDE.md` and are not repeated here. This file holds what is true of **this**
-repository only. The board those rules name does not track this repository: open items are its own
-GitHub issues.
+repository only. Open items are this repository's own GitHub issues, except the ones that order a
+platform tag against this repository's pin — docs/PROJECT_DEFINITION.md §11 owns that distinction.
 
 ## What this is
 
-The Salón Aziza assistant: a consumer of `agent-platform`, beside `medical`, `concierge` and
-`banking`. The design is [`docs/PROJECT_DEFINITION.md`](docs/PROJECT_DEFINITION.md), the voice is
-[`docs/BRAND_VOICE.md`](docs/BRAND_VOICE.md), and how to run it is the root
+The Salón Aziza assistant: a consumer of `agent-platform`, beside `medical`, `concierge`, `bhd`
+and `banreservas`. The design is [`docs/PROJECT_DEFINITION.md`](docs/PROJECT_DEFINITION.md), the
+voice is [`docs/BRAND_VOICE.md`](docs/BRAND_VOICE.md), and how to run it is the root
 [`README.md`](README.md). Read the design document before changing the schema, the tools or the
 guards; read the voice document before writing a single Spanish string.
 
@@ -18,7 +18,7 @@ guards; read the voice document before writing a single Spanish string.
 **The user is a specialist, not a client.** Every sibling assistant answers the person being
 served; this one answers the person doing the serving. A string copied from any of them arrives
 in the wrong register and often in the wrong role — `medical` and `concierge` are formal-*usted*,
-and `banking` is warm-*tú* to a customer, which is not the same as brisk-*tú* to a colleague.
+and `bhd` is warm-*tú* to a customer, which is not the same as brisk-*tú* to a colleague.
 
 A specialist-facing constant is named `*_MSG` or `*_TEXT`. That convention is not cosmetic:
 `tests/test_voice.py` discovers strings by it, so one added outside it is ungated.
