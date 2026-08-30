@@ -99,6 +99,21 @@ def test_an_open_ticket_is_not_a_days_work(ctx, make_specialist, live, outbox):
     assert _mine(outbox, who) == []
 
 
+def test_a_client_who_left_owing_is_still_a_days_work(ctx, make_specialist, live, outbox):
+    """Closed with a balance is closed. Skipped here she would never learn what she earned, on a
+    day she worked — and the salon's failure to collect would read as her having done nothing."""
+    who = make_specialist("nails")
+    context = ctx(who)
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.close_ticket_with_debt(tool_context=context)
+    daily_summary.run(_today())
+
+    body = _mine(outbox, who)[0]
+    assert "Servicios: RD$300.00" in body
+    assert f"Tu comisión ({config.COMMISSION_PCT}%): RD$120.00" in body
+
+
 # --- [2] The figures ----------------------------------------------------------------------
 
 

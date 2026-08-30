@@ -14,6 +14,8 @@ here, which is why the convention is stated in docs/BRAND_VOICE.md rather than i
 
 from __future__ import annotations
 
+import datetime
+import decimal
 import importlib
 import pathlib
 import pkgutil
@@ -98,3 +100,37 @@ def test_no_fixed_string_carries_markup_the_transport_drops(where, text):
 @each_string
 def test_no_fixed_string_asks_two_questions_at_once(where, text):
     assert voice_checks.question_reasons(text) == [], where
+
+
+@pytest.mark.parametrize("reader_is_her", [True, False])
+def test_both_voices_of_the_end_of_day_line_read_as_tu(reader_is_her):
+    """A rendered template carries no `*_MSG` name, so the discovery above cannot see it — and
+    the third person is one "su" away from usted over the very nouns §1 lists."""
+    from aziza_adk import receipts
+
+    out = receipts.render_day(
+        "Zenaida",
+        datetime.date(2026, 8, 27),
+        services_total=decimal.Decimal("8400.00"),
+        commission_pct=40,
+        commission=decimal.Decimal("3360.00"),
+        tips=decimal.Decimal("650.00"),
+        owed_products=decimal.Decimal("15.00"),
+        payday=datetime.date(2026, 8, 29),
+        reader_is_her=reader_is_her,
+    )
+    assert voice_checks.usted_reasons(out) == []
+
+
+def test_a_ticket_carrying_a_previous_balance_reads_as_tu():
+    """The other template this repository renders without a constant to discover."""
+    from aziza_adk import receipts
+
+    line = receipts.Line("Manicura", 1, decimal.Decimal("300.00"), decimal.Decimal("300.00"))
+    out = receipts.render_ticket(
+        "Carmen",
+        [line],
+        decimal.Decimal("300.00"),
+        owed_from_before=decimal.Decimal("200.00"),
+    )
+    assert voice_checks.usted_reasons(out) == []

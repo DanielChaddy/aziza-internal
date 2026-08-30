@@ -24,6 +24,10 @@ from aziza_adk.receipts import Line, Payment
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "db" / "schema.sql"
 
+#: The statuses a specialist's day is counted in. `partial` earns its commission like any other:
+#: the work was done, and collecting the balance is the salon's job rather than hers (§7).
+WORKED_STATUSES = ("paid", "partial")
+
 
 def connect(db_url: str | None = None) -> psycopg.Connection:
     """A sync connection with dict rows, its session pinned to the salon's timezone.
@@ -829,9 +833,9 @@ def period_services(
     row = fetchone(
         conn,
         "SELECT COALESCE(SUM(services_total), 0) AS total FROM sales "
-        "WHERE specialist_id = %(sid)s AND status = 'paid' "
+        "WHERE specialist_id = %(sid)s AND status = ANY(%(worked)s) "
         "  AND business_date BETWEEN %(start)s AND %(end)s",
-        {"sid": specialist_id, "start": start, "end": end},
+        {"sid": specialist_id, "start": start, "end": end, "worked": list(WORKED_STATUSES)},
     )
     return row["total"] if row else ZERO_MONEY
 
@@ -848,13 +852,13 @@ def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.d
         SELECT
           COALESCE((SELECT SUM(services_total) FROM sales
                     WHERE specialist_id = %(sid)s AND business_date = %(day)s
-                      AND status = 'paid'), 0) AS services_total,
+                      AND status = ANY(%(worked)s)), 0) AS services_total,
           COALESCE((SELECT SUM(p.tip) FROM sale_payments p JOIN sales s ON s.id = p.sale_id
                     WHERE s.specialist_id = %(sid)s AND s.business_date = %(day)s
-                      AND s.status = 'paid'), 0) AS tips,
+                      AND s.status = ANY(%(worked)s)), 0) AS tips,
           COALESCE((SELECT SUM(products_total) FROM sales
                     WHERE specialist_id = %(sid)s AND business_date = %(day)s
-                      AND status = 'paid'), 0) AS products_total,
+                      AND status = ANY(%(worked)s)), 0) AS products_total,
           -- Her WHOLE outstanding balance, not this day's entries: what she owes is what she
           -- carries, and reporting only today's would read as if the rest were settled. Split,
           -- because owing for a drink and owing cash are told apart on her message (§7).
@@ -865,7 +869,7 @@ def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.d
                                     WHEN settles = 'loan' THEN -amount ELSE 0 END)
                     FROM specialist_ledger WHERE specialist_id = %(sid)s), 0) AS owed_loans
         """,
-        {"sid": specialist_id, "day": business_date},
+        {"sid": specialist_id, "day": business_date, "worked": list(WORKED_STATUSES)},
     )
 
 
@@ -885,16 +889,16 @@ def owners_with_a_channel(conn: psycopg.Connection) -> list[dict]:
 
 
 def specialists_billed_on(conn: psycopg.Connection, business_date: dt.date) -> list[dict]:
-    """Everyone with a paid sale on that day. Nobody else is owed a message."""
+    """Everyone who billed on that day. Nobody else is owed a message."""
     return fetchall(
         conn,
         """
         SELECT DISTINCT sp.id, sp.full_name, sp.telegram_user_id
         FROM sales s JOIN specialists sp ON sp.id = s.specialist_id
-        WHERE s.business_date = %(day)s AND s.status = 'paid'
+        WHERE s.business_date = %(day)s AND s.status = ANY(%(worked)s)
         ORDER BY sp.id
         """,
-        {"day": business_date},
+        {"day": business_date, "worked": list(WORKED_STATUSES)},
     )
 
 

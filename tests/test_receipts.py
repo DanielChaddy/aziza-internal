@@ -61,6 +61,19 @@ def test_an_empty_ticket_still_renders_rather_than_raising():
     assert "Total: RD$0.00" in render_ticket("Laura", [], Decimal("0.00"))
 
 
+def test_what_she_owed_before_is_beside_the_total_and_not_in_it():
+    """It is not this sale's money — adding it would charge her twice for the same work once the
+    balance is settled, and would take commission on a debt."""
+    out = render_ticket("Carmen", [MANI], Decimal("800.00"), owed_from_before=Decimal("200.00"))
+    assert "Total: RD$800.00" in out
+    assert "DEUDA ANTERIOR: RD$200.00 (aparte de este total)" in out
+
+
+def test_a_client_who_owes_nothing_gets_no_line_about_it():
+    """A zero there reads as a debt of zero, which is a thing to ask about."""
+    assert "DEUDA" not in render_ticket("Laura", [MANI], Decimal("800.00"))
+
+
 # --- [2] The receipt ----------------------------------------------------------------------
 
 
@@ -141,6 +154,28 @@ def test_what_they_made_is_the_commission_plus_the_tips():
         tips=Decimal("650.00"),
     )
     assert "Total para ti hoy: RD$4,010.00" in out
+
+
+def test_a_day_told_about_somebody_addresses_nobody_as_her():
+    """An owner reading about her gets the same figures, and not one of them said to be the
+    reader's own. In the second person this greets the owner by another woman's name."""
+    out = render_day(
+        "Zenaida",
+        dt.date(2026, 8, 27),
+        services_total=Decimal("8400.00"),
+        commission_pct=40,
+        commission=Decimal("3360.00"),
+        tips=Decimal("650.00"),
+        owed_products=Decimal("15.00"),
+        reader_is_her=False,
+    )
+    assert "Así cerró el día de Zenaida, jueves 27 de agosto de 2026." in out
+    assert "Comisión (40%): RD$3,360.00" in out
+    assert "Propinas (se las entregamos hoy): RD$650.00" in out
+    assert "Total para ella hoy: RD$4,010.00" in out
+    assert "Lo que debe al salón:" in out
+    for said_to_the_reader in ("Hola ", "tu día", "Tu comisión", "te las", "para ti", "debes"):
+        assert said_to_the_reader not in out, said_to_the_reader
 
 
 def test_a_day_with_no_tips_still_says_so():

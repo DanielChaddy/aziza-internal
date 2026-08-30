@@ -263,10 +263,14 @@ def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = 
         if queries.gender_affects_ticket(conn, sale["id"])
         else None
     )
+    # Read on every render rather than carried from the open: she may settle it mid-visit, and
+    # whoever charges is not always whoever opened the ticket (§7).
+    owing = queries.client_balance(conn, sale["client_id"])
     session.remember_quote(tool_context, sale["sale_ref"], total)
     return {
         "client_name": sale["client_name"],
         "total": money.rd(total),
+        **({"owed_from_before": money.rd(owing)} if owing > ZERO else {}),
         "ticket": receipts.render_ticket(
             sale["client_name"],
             lines,
@@ -276,6 +280,7 @@ def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = 
             gender_label=label,
             assumed=sale["gender_source"] == names.DEFAULTED,
             worked_by=worked_by,
+            owed_from_before=owing,
         ),
     }
 
@@ -1216,14 +1221,16 @@ def salon_day(tool_context: ToolContext = None) -> dict:
 
 
 def my_day(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
-    """What this specialist has made today so far, and what she owes the salon.
+    """What this specialist has made today so far, and what she owes the salon. An owner who
+    names somebody reads the same day told about her instead.
 
     The same figures and the same wording the end-of-day message uses, so the two can never
     disagree about a day.
 
     Args:
-        on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
-            work this is, in her own words. An ordinary specialist leaves it empty.
+        on_behalf_of: ONLY for the administration: the specialist this day belongs to, in her own
+            words. REQUIRED of an owner who does no salon work, since she has no day of her own.
+            An ordinary specialist leaves it empty.
 
     Returns:
         {"summary": str} — send it as it came — or {"error", "message"}.
@@ -1239,7 +1246,9 @@ def my_day(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:
             totals = day_figures(conn, person.specialist_id, day)
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
-    return {"summary": summary_text(person.name, day, totals)}
+    # Naming somebody makes this a report rather than her own day — §7.
+    hers = person.specialist_id == session.specialist_id(tool_context)
+    return {"summary": summary_text(person.name, day, totals, reader_is_her=hers)}
 
 
 def day_figures(conn, specialist_id: int, day: dt.date) -> dict:
@@ -1258,7 +1267,7 @@ def day_figures(conn, specialist_id: int, day: dt.date) -> dict:
     }
 
 
-def summary_text(full_name: str, day: dt.date, totals: dict) -> str:
+def summary_text(full_name: str, day: dt.date, totals: dict, *, reader_is_her: bool = True) -> str:
     """One day's figures as the specialist reads them.
 
     Takes the whole `day_totals` row rather than six positional amounts: the two callers must not
@@ -1280,4 +1289,5 @@ def summary_text(full_name: str, day: dt.date, totals: dict) -> str:
         owed_loans=totals["owed_loans"],
         period_commission=totals.get("period_commission", ZERO),
         payday=totals.get("payday"),
+        reader_is_her=reader_is_her,
     )
