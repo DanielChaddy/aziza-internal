@@ -731,29 +731,36 @@ def client_for(conn: psycopg.Connection, name: str) -> dict:
     """The client that name refers to, created on her first visit.
 
     Matched on the FOLDED name, so "MARÍA" and "maria" are one person rather than two balances.
-    Two different people who share a name share a row until something asks for a phone — the
-    schema says so where the column is.
+    Select-then-insert rather than `ON CONFLICT`, which needs a unique index on the column it
+    names: `folded` no longer carries one, and the upsert would raise on every call.
     """
-    key = fold(name)
+    if found := find_clients(conn, name):
+        return found[0]
+    # TODO: read-then-write with no row lock, as `tools.record_payment` has. Two specialists
+    # opening a first ticket for the same person at the same moment make two rows.
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO clients (client_ref, name, folded) "
             "VALUES (gen_random_uuid()::text, %(name)s, %(key)s) "
-            "ON CONFLICT (folded) DO UPDATE SET name = clients.name "
             "RETURNING id, client_ref, name, phone",
-            {"name": name.strip(), "key": key},
+            {"name": name.strip(), "key": fold(name)},
         )
         row = cur.fetchone()
     conn.commit()
     return row
 
 
-def find_client(conn: psycopg.Connection, name: str) -> dict | None:
-    """The client that name refers to, or None. Never creates: settling a debt against a person
-    the salon has never seen would answer a typo with a new client rather than a question."""
-    return fetchone(
+def find_clients(conn: psycopg.Connection, name: str) -> list[dict]:
+    """Every client that name refers to, oldest first. Never creates: settling a debt against a
+    person the salon has never seen would answer a typo with a new client rather than a question.
+
+    A LIST rather than a row. `folded` is no longer unique, and `fetchone` on it would hand back
+    whichever María the planner reached first — money moved to a stranger's balance, with nothing
+    to show it had happened.
+    """
+    return fetchall(
         conn,
-        "SELECT id, client_ref, name, phone FROM clients WHERE folded = %(key)s",
+        "SELECT id, client_ref, name, phone FROM clients WHERE folded = %(key)s ORDER BY id",
         {"key": fold(name)},
     )
 

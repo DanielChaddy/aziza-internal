@@ -84,9 +84,9 @@ CREATE INDEX IF NOT EXISTS ix_services_discipline ON services (discipline_id);
 -- specialist said; this is the person that name referred to, so a balance can outlive the ticket
 -- that created it and be found again on her next visit (§7).
 --
--- `phone` is what will eventually tell two people called Carmen apart. Until something asks for
--- one, a name is matched folded and a second Carmen shares the first one's row — which is why
--- the column exists now and the ambiguity is written down rather than discovered.
+-- THE IDENTITY IS THE PAIR, and neither half works alone. A name alone made two people called
+-- Carmen one row, one balance and one history. A number alone would make a mother and her
+-- daughter one client, and they share a phone as a matter of course (§3).
 CREATE TABLE IF NOT EXISTS clients (
     id         SERIAL PRIMARY KEY,
     client_ref TEXT NOT NULL UNIQUE,
@@ -94,10 +94,19 @@ CREATE TABLE IF NOT EXISTS clients (
     -- Accent- and case-folded, so "MARÍA" and "maria" are one person. Written by the app rather
     -- than by the database, because the fold is `conversation_core.fold` and one implementation
     -- of it is the whole point.
-    folded     TEXT NOT NULL UNIQUE,
-    phone      TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    folded     TEXT NOT NULL,
+    -- Digits only, written by the app for the same reason `folded` is. NULL is a client who gave
+    -- no number, and Postgres counts NULLs as distinct in a unique index — so each of those gets
+    -- her own row rather than joining one heap of everybody who was never asked (§3).
+    phone      TEXT CONSTRAINT clients_phone_digits CHECK (phone ~ '^[0-9]+$'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (folded, phone)
 );
+
+-- Every lookup is by name. The UNIQUE above leads with `folded` and would serve it, but a client
+-- who gave no number must not be reachable by name at all — so the read carries `phone IS NOT
+-- NULL` and wants an index that already excludes her.
+CREATE INDEX IF NOT EXISTS ix_clients_named ON clients (folded) WHERE phone IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sales (
     id             SERIAL PRIMARY KEY,
@@ -146,6 +155,12 @@ CREATE INDEX IF NOT EXISTS ix_sales_specialist_date ON sales (specialist_id, bus
 -- What one person entered against another's name, which is the question an audit asks.
 CREATE INDEX IF NOT EXISTS ix_sales_recorded_by ON sales (recorded_by)
     WHERE recorded_by <> specialist_id;
+
+-- WHOSE VISITS THESE ARE. The same shape as `ix_sales_specialist_date` and for the same reason:
+-- a client's history orders by day within one person. Partial, because a sale with no client is
+-- one no question about a client can be about.
+CREATE INDEX IF NOT EXISTS ix_sales_client_date ON sales (client_id, business_date)
+    WHERE client_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sale_lines (
     id           SERIAL PRIMARY KEY,
