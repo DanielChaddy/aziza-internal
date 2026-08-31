@@ -40,11 +40,32 @@ def test_two_different_urls_are_two_different_codes():
 # --- [2] What a third party emits, asserted rather than trusted -----------------------------
 
 
+#: The SVG namespace. A NAME rather than a URL anything fetches, and the only `http://` the
+#: document is allowed to contain — see the check below.
+SVG_NS = 'xmlns="http://www.w3.org/2000/svg"'
+
+
 @pytest.mark.parametrize("forbidden", ["<script", "http://", "https://", "xlink:href", "<image"])
 def test_the_svg_carries_no_script_and_no_external_reference(forbidden):
     """An `<img>` renders SVG with scripting disabled by specification, so this is belt and
     braces — but the policy that admits `data:` is written on the strength of it."""
-    assert forbidden not in qr.svg(_URL)
+    assert forbidden not in qr.svg(_URL).replace(SVG_NS, "")
+
+
+def test_the_svg_is_a_document_an_img_can_actually_load():
+    """THE property this file was missing. segno's inline writer emits a FRAGMENT with no `xmlns`,
+    which is right for splicing into HTML and unloadable through `<img>`: the browser shows a
+    broken-image glyph and nothing anywhere says why."""
+    assert SVG_NS in qr.svg(_URL)
+
+
+def test_the_code_the_page_receives_is_the_document_and_not_a_fragment():
+    """Asserted through `data_url`, because that is what actually reaches the `<img>`."""
+    import base64
+
+    decoded = base64.b64decode(qr.data_url(_URL).split(",", 1)[1]).decode()
+    assert decoded.startswith("<svg ")
+    assert SVG_NS in decoded
 
 
 def test_the_code_is_black_on_an_explicit_white_ground():
