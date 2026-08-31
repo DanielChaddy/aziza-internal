@@ -58,3 +58,7 @@ She is *"la clienta"*, or the name the specialist gave. Her telephone is the one
 stored, and it is stored to tell two of them apart rather than to reach her — asked for once when
 the salon does not know her, and never said back, never quoted in a message, never on a ticket.
 Nothing else about her is stored, said or asked for.
+
+**The one exception is a report an owner asked for**, where her number is shown because that is
+what the report is for: an owner reading who stopped coming is reading it in order to call her.
+The exception is the OWNER's, not the report's — nothing a specialist reads carries a number.

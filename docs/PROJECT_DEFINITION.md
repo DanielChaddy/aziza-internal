@@ -104,6 +104,21 @@ below follows from that one difference.
   pass reads "Ana" out of "Mariana", and a fuzzy hit here attaches a real balance to the wrong
   person. That is why `clients.Client` carries no aliases.
 
+**What the salon knows about a client, an OWNER can read, and nobody else.** `client_history`
+answers what one client has had done — every charged visit, at the price the ticket carried, with
+whose hands did it — and what she owes now. It resolves her the same way a ticket does, so a name
+two clients answer to is a question here too: a history of the wrong woman is worse than none,
+because it looks like a fact and nobody at the till is there to contest it.
+
+Two figures on it are deliberately not one. What a visit says she left owing is what happened
+that day; `Debe ahora` is her balance. A settlement carries no `sale_id` — it pays down the
+balance rather than the ticket — so it can never be attributed back to a visit, and a payment
+made weeks later does not rewrite what a day recorded.
+
+Every child table is reached through its own correlated subquery rather than a join. `sale_lines`
+and `sale_payments` each fan out independently, so one query joining both multiplies a sale's
+total by the number of payments it took — and the figure that comes out still looks like money.
+
 ## §4 · The ticket
 
 One open ticket per specialist, enforced by a partial unique index rather than by a check in the

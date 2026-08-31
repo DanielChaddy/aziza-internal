@@ -73,9 +73,15 @@ class Payment:
     change_given: Decimal = ZERO
 
 
+def spanish_day(day: dt.date) -> str:
+    """ "27 de agosto de 2026" — a day in a LIST of them, where the weekday is dead weight and
+    three wrapped lines per visit is what it costs."""
+    return f"{day.day} de {_MONTHS[day.month - 1]} de {day.year}"
+
+
 def spanish_date(day: dt.date) -> str:
     """ "martes 27 de agosto de 2026" — the salon's own way of writing a day."""
-    return f"{_WEEKDAYS[day.weekday()]} {day.day} de {_MONTHS[day.month - 1]} de {day.year}"
+    return f"{_WEEKDAYS[day.weekday()]} {spanish_day(day)}"
 
 
 def render_ticket(
@@ -123,6 +129,62 @@ def render_ticket(
     if assumed and gender_label:
         rows += ["", GENDER_ASSUMED_TEXT]
     return "\n".join(rows)
+
+
+@dataclass(frozen=True)
+class Visit:
+    """One charged ticket in a client's history, at the prices frozen when it was charged."""
+
+    day: dt.date
+    items: str
+    total: Decimal
+    specialist: str
+    left_owing: Decimal = ZERO
+
+
+def render_client_history(
+    client_name: str,
+    visits: Sequence[Visit],
+    *,
+    total_visits: int,
+    billed: Decimal,
+    balance: Decimal,
+    first_visit: dt.date | None,
+    phone: str = "",
+) -> str:
+    """What one client has had done, for the owner who asked.
+
+    TWO figures that must never read as one. The parenthesis on a visit is what she left owing
+    THAT DAY; `Debe ahora` is what she owes now. A later payment carries no `sale_id`, so it can
+    never be attributed back to a visit — which is why the tenses differ.
+
+    `phone` is shown here and in no other template: this is the report it exists for, and the
+    reader is an owner (docs/BRAND_VOICE.md §7).
+    """
+    if not visits:
+        return f"{client_name} todavía no tiene visitas cobradas."
+
+    head = f"{client_name} — {_visits_said(total_visits)}"
+    if first_visit is not None:
+        head += f" desde el {spanish_day(first_visit)}"
+    rows = [head + "." + (f" Tel {phone}" if phone else ""), ""]
+    for visit in visits:
+        line = (
+            f"• {spanish_day(visit.day)} — {visit.items} — {rd(visit.total)} — {visit.specialist}"
+        )
+        if visit.left_owing > ZERO:
+            line += f" (quedó debiendo {rd(visit.left_owing)})"
+        rows.append(line)
+    if (older := total_visits - len(visits)) > 0:
+        rows += ["", f"Hay {_visits_said(older)} más antes de esas."]
+    rows += ["", f"Total facturado: {rd(billed)}"]
+    if balance > ZERO:
+        rows.append(f"Debe ahora: {rd(balance)}")
+    return "\n".join(rows)
+
+
+def _visits_said(n: int) -> str:
+    return "1 visita" if n == 1 else f"{n} visitas"
 
 
 def render_receipt(

@@ -122,6 +122,32 @@ def test_both_voices_of_the_end_of_day_line_read_as_tu(reader_is_her):
     assert voice_checks.usted_reasons(out) == []
 
 
+def test_a_clients_history_reads_as_tu():
+    """A report ABOUT a client is where "su" gets written — and `_POSSESSIVE_NOUNS` holds
+    `clienta`, `total` and `día`. No `*_MSG` name, so nothing else can see this one."""
+    from aziza_adk import receipts
+
+    out = receipts.render_client_history(
+        "Carmen",
+        [
+            receipts.Visit(
+                day=datetime.date(2026, 8, 22),
+                items="Manicura normal",
+                total=decimal.Decimal("300.00"),
+                specialist="Yamilé",
+                left_owing=decimal.Decimal("100.00"),
+            )
+        ],
+        total_visits=8,
+        billed=decimal.Decimal("4350.00"),
+        balance=decimal.Decimal("100.00"),
+        first_visit=datetime.date(2026, 3, 14),
+        phone="809-555-0101",
+    )
+    assert voice_checks.usted_reasons(out) == []
+    assert voice_checks.markdown_reasons(out) == []
+
+
 @pytest.mark.parametrize("walk_in", [False, True])
 def test_a_ticket_that_says_more_than_the_work_reads_as_tu(walk_in):
     """The other template this repository renders without a constant to discover. Both extras
