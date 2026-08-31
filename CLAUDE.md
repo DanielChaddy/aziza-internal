@@ -97,18 +97,18 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | who really works here | `staff_data.py` — a Telegram id in it is a credential, not a label |
 | the invented specialists | `demo_data.py`, seeded only behind `--with-demo-specialists` |
 | which specialist a spoken name means | `staff.py`, and `tests/test_staff.py` |
+| which client a name and a number mean | `clients.py`, and `tests/test_clients.py` |
 | what a client owes, and change | `queries.client_*`, `tools.record_payment`, §7 |
 | the register, and what it should hold | `queries.expected_register`, `tools.close_register`, §7 |
 | which price column a client reads | `names.py`, and `tests/test_names.py` |
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 
-`money.py`, `catalog.py`, `names.py`, `staff.py`, `receipts.py`, `hours.py`, `pay.py`,
-`catalog_data.py`,
-`staff_data.py` and `demo_data.py` reach no
-database and no model, and that is load-bearing rather than tidy: the commission arithmetic, the
-split-payment balance, the price column a name selects and the rendered template are the
-behaviours that must be assertable, and an assertion that reaches a database is one the gate can
-skip. `hours.py` takes it further and holds no CLOCK either — the moment is a parameter, and
+`money.py`, `catalog.py`, `names.py`, `staff.py`, `clients.py`, `receipts.py`, `hours.py`,
+`pay.py`, `catalog_data.py`, `staff_data.py` and `demo_data.py` reach no database and no model,
+and that is load-bearing rather than tidy: the commission arithmetic, the split-payment balance,
+the price column a name selects, which of two Marías a number means and the rendered template are
+the behaviours that must be assertable, and an assertion that reaches a database is one the gate
+can skip. `hours.py` takes it further and holds no CLOCK either — the moment is a parameter, and
 `tools.now` is the one wall-clock read on the turn path, so "refused at 20:01 on a Tuesday" is a
 value rather than an evening spent waiting.
 

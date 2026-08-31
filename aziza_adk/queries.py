@@ -727,42 +727,55 @@ def close_sale(
 # --- who owes the salon -----------------------------------------------------
 
 
-def client_for(conn: psycopg.Connection, name: str) -> dict:
-    """The client that name refers to, created on her first visit.
+def clients_named(conn: psycopg.Connection, name: str) -> list[dict]:
+    """Every client a spoken name reaches, oldest first. Never creates: creating on sight is how
+    a typo answers with a new client rather than with a question.
 
-    Matched on the FOLDED name, so "MARÍA" and "maria" are one person rather than two balances.
-    Select-then-insert rather than `ON CONFLICT`, which needs a unique index on the column it
-    names: `folded` no longer carries one, and the upsert would raise on every call.
+    A LIST rather than a row. `folded` is not unique, and `fetchone` on it would hand back
+    whichever María the planner reached first — money moved to a stranger's balance, with nothing
+    to show it had happened.
+
+    `phone IS NOT NULL` is what makes a client who gave no number unreachable by name (§3). She
+    is charged and her work counts; she simply cannot be found again, which is the truth about
+    what the salon knows rather than a limitation of this query.
     """
-    if found := find_clients(conn, name):
-        return found[0]
-    # TODO: read-then-write with no row lock, as `tools.record_payment` has. Two specialists
-    # opening a first ticket for the same person at the same moment make two rows.
+    return fetchall(
+        conn,
+        "SELECT id, client_ref, name, phone FROM clients "
+        "WHERE folded = %(key)s AND phone IS NOT NULL ORDER BY id",
+        {"key": fold(name)},
+    )
+
+
+def client_has_phone(conn: psycopg.Connection, client_id: int) -> bool:
+    """Whether the salon can find this client again. What credit turns on (§3)."""
+    row = fetchone(
+        conn,
+        "SELECT phone IS NOT NULL AS reachable FROM clients WHERE id = %(cid)s",
+        {"cid": client_id},
+    )
+    return bool(row and row["reachable"])
+
+
+def create_client(conn: psycopg.Connection, name: str, phone: str | None) -> dict:
+    """Register a client. `phone` is already keyed by `clients.phone_key`, or None for somebody
+    who gave no number.
+
+    `ON CONFLICT` holds the race for a client who gave one. It cannot fire for a client who did
+    not, because Postgres counts NULLs as distinct — which is the same rule that gives each of
+    them her own row.
+    """
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO clients (client_ref, name, folded) "
-            "VALUES (gen_random_uuid()::text, %(name)s, %(key)s) "
+            "INSERT INTO clients (client_ref, name, folded, phone) "
+            "VALUES (gen_random_uuid()::text, %(name)s, %(key)s, %(phone)s) "
+            "ON CONFLICT (folded, phone) DO UPDATE SET name = clients.name "
             "RETURNING id, client_ref, name, phone",
-            {"name": name.strip(), "key": fold(name)},
+            {"name": name.strip(), "key": fold(name), "phone": phone},
         )
         row = cur.fetchone()
     conn.commit()
     return row
-
-
-def find_clients(conn: psycopg.Connection, name: str) -> list[dict]:
-    """Every client that name refers to, oldest first. Never creates: settling a debt against a
-    person the salon has never seen would answer a typo with a new client rather than a question.
-
-    A LIST rather than a row. `folded` is no longer unique, and `fetchone` on it would hand back
-    whichever María the planner reached first — money moved to a stranger's balance, with nothing
-    to show it had happened.
-    """
-    return fetchall(
-        conn,
-        "SELECT id, client_ref, name, phone FROM clients WHERE folded = %(key)s ORDER BY id",
-        {"key": fold(name)},
-    )
 
 
 def client_balance(conn: psycopg.Connection, client_id: int) -> Decimal:

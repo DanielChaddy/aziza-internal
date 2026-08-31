@@ -30,6 +30,20 @@ SENTINEL_PREFIX = "9999"
 #: Telegram id — whom an id-matched clean-up would leave behind in the real dataset.
 SENTINEL_REF = "sentinel-"
 
+#: The clients the cases open tickets for, registered before each one rather than given a number
+#: at seventy call sites. What those cases exercise is the ticket, and a client the salon already
+#: knows is the ordinary shape of one: she is never asked for a number again (§3). A case about
+#: WHICH client she is names somebody outside this list and registers her itself.
+KNOWN_CLIENTS = {
+    "Laura": "8090000001",
+    "Carmen": "8090000002",
+    "Ana": "8090000003",
+    "Ariel": "8090000004",
+    "MARÍA": "8090000005",
+    "Yaritza": "8090000006",
+    "Luis": "8090000007",
+}
+
 
 def _no_db(reason: str) -> None:
     (pytest.fail if config.REQUIRE_DB else pytest.skip)(reason)
@@ -59,7 +73,8 @@ def conn():
 
 @pytest.fixture
 def sentinel(conn):
-    """Delete every test specialist before and after each case, cascading their sales away."""
+    """Delete every test specialist before and after each case, cascading their sales away, and
+    register the clients those cases name."""
 
     def clean() -> None:
         # The records go first, and that ORDER is the schema talking: neither
@@ -110,7 +125,12 @@ def sentinel(conn):
                 "AND NOT EXISTS (SELECT 1 FROM client_ledger l WHERE l.client_id = c.id)"
             )
 
+    def register_known_clients() -> None:
+        for name, phone in KNOWN_CLIENTS.items():
+            queries.create_client(conn, name, phone)
+
     clean()
+    register_known_clients()
     yield SENTINEL_PREFIX
     clean()
 

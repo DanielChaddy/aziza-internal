@@ -25,6 +25,7 @@ from google.adk.tools import ToolContext
 
 from aziza_adk import (
     catalog,
+    clients,
     config,
     money,
     names,
@@ -155,6 +156,15 @@ OVERPAYMENT_MSG = (
     "Ese monto pasa de lo que falta por cobrar. Si la diferencia es propina, dímelo así."
 )
 BACKEND_DOWN_MSG = "No pude guardar eso ahora mismo. ¿Lo intentamos de nuevo en un momento?"
+NEED_CLIENT_PHONE_MSG = "No tengo a esa clienta registrada. ¿Cuál es su teléfono?"
+AMBIGUOUS_CLIENT_MSG = "Hay más de una clienta con ese nombre. ¿Cuál es su teléfono?"
+BAD_PHONE_MSG = "No entendí el teléfono. Dímelo con los diez dígitos, por ejemplo 8091234567."
+ANOTHER_CLIENT_MSG = (
+    "Ya tengo una clienta con ese nombre y otro teléfono. ¿Es otra clienta, o revisamos el número?"
+)
+NO_CREDIT_WALK_IN_MSG = (
+    "A esa clienta no le puedo fiar: no tengo su teléfono para buscarla en la próxima visita."
+)
 
 #: What a specialist calls each way of paying. The values are the salon's three accounts, and
 #: nothing outside them can be recorded — a payment nobody can attribute to an account is one the
@@ -266,6 +276,7 @@ def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = 
     # Read on every render rather than carried from the open: she may settle it mid-visit, and
     # whoever charges is not always whoever opened the ticket (§7).
     owing = queries.client_balance(conn, sale["client_id"])
+    walk_in = not queries.client_has_phone(conn, sale["client_id"])
     session.remember_quote(tool_context, sale["sale_ref"], total)
     return {
         "client_name": sale["client_name"],
@@ -281,8 +292,25 @@ def _ticket_answer(conn, sale: dict, tool_context: Any, worked_by: str | None = 
             assumed=sale["gender_source"] == names.DEFAULTED,
             worked_by=worked_by,
             owed_from_before=owing,
+            walk_in=walk_in,
         ),
     }
+
+
+def _phone(said: str) -> tuple[str, dict | None]:
+    """The number she gave as the salon stores it, or `(_, error)` for the caller to return.
+
+    An empty answer is not an error — most turns carry no number at all. What is refused is
+    something that was meant to be a number and is not one, and it is refused BEFORE a connection
+    opens, so a typo can never fall through to matching on the name alone (§3).
+    """
+    said = (said or "").strip()
+    if not said:
+        return "", None
+    key = clients.phone_key(said)
+    if key is None:
+        return "", {"error": "bad_phone", "message": BAD_PHONE_MSG}
+    return key, None
 
 
 def _acting(conn, tool_context: Any, on_behalf_of: str) -> tuple[staff.Person | None, dict | None]:
@@ -363,8 +391,11 @@ _GENDERS = {
 
 def start_ticket(
     client_name: str,
+    client_phone: str = "",
     client_gender: str = "",
     on_behalf_of: str = "",
+    is_new_client: bool = False,
+    walk_in: bool = False,
     tool_context: ToolContext = None,
 ) -> dict:
     """Open a new ticket for a client the specialist just worked on.
@@ -373,11 +404,19 @@ def start_ticket(
     Pass `client_gender` ONLY when the specialist actually said; do not infer it yourself and do
     not ask for it up front. Left empty, the client's name decides, and the ticket says so.
 
+    The salon tells two clients apart by her phone number. Pass one ONLY when this tool has just
+    asked for it; a client it already knows by name needs none.
+
     Args:
         client_name: The client's name, as the specialist said it.
+        client_phone: Her number, ONLY when a previous call asked for it. Empty otherwise.
         client_gender: Only if she said so, in her own words. Empty otherwise.
         on_behalf_of: ONLY for the administration, and then it is REQUIRED: the specialist whose
             work this is, in her own words. An ordinary specialist leaves it empty.
+        is_new_client: ONLY after "another_client_with_that_name" and the specialist saying in
+            words that this is a different person. Never on your own.
+        walk_in: ONLY after "client_phone_required" and the specialist saying the client would
+            not give a number. She can then be charged but never fiada, and never found again.
 
     Returns:
         {"opened": true, "client_name": str, "priced_for": str}, or {"error", "message"}. Opening
@@ -388,6 +427,10 @@ def start_ticket(
     name = (client_name or "").strip()
     if not name:
         return {"error": "no_client_name", "message": NEED_CLIENT_NAME_MSG}
+
+    key, refused = _phone(client_phone)
+    if refused is not None:
+        return refused
 
     said = fold(client_gender or "").strip()
     if said:
@@ -425,13 +468,31 @@ def start_ticket(
                     "client_name": busy["client_name"],
                     "specialist": person.name,
                 }
-            client = queries.client_for(conn, name)
-            owing = queries.client_balance(conn, client["id"])
+            roster = clients.roster(queries.clients_named(conn, name))
+            found = clients.pick(roster, key)
+            if found.candidates:
+                return {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+            if found.match is not None:
+                client_id = found.match.client_id
+            elif not key:
+                # Registering her under a name alone is what put two people on one balance. A
+                # walk-in is the answer to that question, and it is a person's to give (§3).
+                if not walk_in:
+                    return {"error": "client_phone_required", "message": NEED_CLIENT_PHONE_MSG}
+                client_id = queries.create_client(conn, name, None)["id"]
+            elif roster and not is_new_client:
+                return {
+                    "error": "another_client_with_that_name",
+                    "message": ANOTHER_CLIENT_MSG,
+                }
+            else:
+                client_id = queries.create_client(conn, name, key)["id"]
+            owing = queries.client_balance(conn, client_id)
             sale = queries.create_sale(
                 conn,
                 person.specialist_id,
                 name,
-                client_id=client["id"],
+                client_id=client_id,
                 client_gender=gender,
                 gender_source=source,
                 recorded_by=session.specialist_id(tool_context),
@@ -831,6 +892,10 @@ def close_ticket_with_debt(on_behalf_of: str = "", tool_context: ToolContext = N
             if outstanding <= ZERO:
                 return {"error": "nothing_outstanding", "message": NOTHING_OUTSTANDING_MSG}
 
+            # Fiarle a quien el salón no puede volver a encontrar is a debt uncollectable by
+            # construction: her row is never matched by name again (§3).
+            if not queries.client_has_phone(conn, sale["client_id"]):
+                return {"error": "no_credit_walk_in", "message": NO_CREDIT_WALK_IN_MSG}
             queries.record_client_debt(
                 conn,
                 sale["client_id"],
@@ -860,6 +925,7 @@ def settle_client_debt(
     client: str,
     amount: str,
     method: str,
+    client_phone: str = "",
     on_behalf_of: str = "",
     tool_context: ToolContext = None,
 ) -> dict:
@@ -872,12 +938,16 @@ def settle_client_debt(
         client: Her name, as the specialist said it.
         amount: What she handed over, in numbers.
         method: efectivo, Banreservas or BHD, in the specialist's own words.
+        client_phone: Her number, ONLY when a previous call asked for it. Empty otherwise.
         on_behalf_of: ONLY for an owner, and then it is REQUIRED.
 
     Returns:
         {"paid": str, "still_owes": str} or {"error", "message"}.
     """
     if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    key, refused = _phone(client_phone)
+    if refused is not None:
         return refused
     canonical = _METHODS.get(fold(method or "").strip())
     if canonical is None:
@@ -894,11 +964,15 @@ def settle_client_debt(
             _, refused = _acting(conn, tool_context, on_behalf_of)
             if refused is not None:
                 return refused
-            named = queries.find_clients(conn, client)
-            if not named:
+            picked = clients.pick(clients.roster(queries.clients_named(conn, client)), key)
+            if picked.candidates:
+                # NOT the one who happens to owe. It looks like the only reading that does
+                # anything, and it credits money to a woman who may not have handed it over.
+                return {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+            found = picked.match
+            if found is None:
                 return {"error": "unknown_client", "message": CLIENT_OWES_NOTHING_MSG}
-            found = named[0]
-            balance = queries.client_balance(conn, found["id"])
+            balance = queries.client_balance(conn, found.client_id)
             if balance <= ZERO:
                 return {"error": "nothing_owed", "message": CLIENT_OWES_NOTHING_MSG}
             if paid > balance:
@@ -911,7 +985,7 @@ def settle_client_debt(
                 }
             queries.record_client_payment(
                 conn,
-                found["id"],
+                found.client_id,
                 paid,
                 _today(),
                 recorded_by=session.specialist_id(tool_context),
@@ -919,7 +993,7 @@ def settle_client_debt(
             )
             return {
                 "paid": money.rd(paid),
-                "client": found["name"],
+                "client": found.name,
                 "still_owes": money.rd(balance - paid),
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring

@@ -122,8 +122,10 @@ def test_both_voices_of_the_end_of_day_line_read_as_tu(reader_is_her):
     assert voice_checks.usted_reasons(out) == []
 
 
-def test_a_ticket_carrying_a_previous_balance_reads_as_tu():
-    """The other template this repository renders without a constant to discover."""
+@pytest.mark.parametrize("walk_in", [False, True])
+def test_a_ticket_that_says_more_than_the_work_reads_as_tu(walk_in):
+    """The other template this repository renders without a constant to discover. Both extras
+    speak ABOUT the client rather than to the reader, which is where "su" gets written."""
     from aziza_adk import receipts
 
     line = receipts.Line("Manicura", 1, decimal.Decimal("300.00"), decimal.Decimal("300.00"))
@@ -132,5 +134,6 @@ def test_a_ticket_carrying_a_previous_balance_reads_as_tu():
         [line],
         decimal.Decimal("300.00"),
         owed_from_before=decimal.Decimal("200.00"),
+        walk_in=walk_in,
     )
     assert voice_checks.usted_reasons(out) == []

@@ -36,7 +36,11 @@ class Sellable(Protocol):
     aliases: tuple[str, ...]
 
 
+#: What the RESOLVER reads off a row.
 T = TypeVar("T", bound=Sellable)
+#: What an ANSWER carries. `Resolution` reads nothing off it, so a row that is chosen some other
+#: way — a client, by her number — is answered in the same three shapes without being sellable.
+R = TypeVar("R")
 
 
 @dataclass(frozen=True)
@@ -72,7 +76,7 @@ class Product:
 
 
 @dataclass(frozen=True)
-class Resolution(Generic[T]):
+class Resolution(Generic[R]):
     """What one spoken phrase resolved to.
 
     Exactly one of these is meaningful: `match` when the phrase named one row, `candidates` when
@@ -80,8 +84,8 @@ class Resolution(Generic[T]):
     says out loud, not an error.
     """
 
-    match: T | None = None
-    candidates: tuple[T, ...] = ()
+    match: R | None = None
+    candidates: tuple[R, ...] = ()
 
 
 def price_for(service: Service, gender: Gender) -> Decimal | None:
