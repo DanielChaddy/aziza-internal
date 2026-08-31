@@ -878,6 +878,7 @@ def record_payment(
             sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
+            queries.lock_sale(conn, sale["id"])
             lines = queries.sale_lines(conn, sale["id"])
             product_lines = queries.sale_product_lines(conn, sale["id"])
             if not lines and not product_lines:
@@ -888,8 +889,6 @@ def record_payment(
             if not session.was_quoted(tool_context, sale["sale_ref"], owed):
                 return {"error": "not_quoted", "message": NOT_QUOTED_MSG}
 
-            # TODO: read-then-write with no row lock. The channel's turn lock serializes one
-            # specialist, so only a second entry point could race this into an overpayment.
             settled = sum((p.amount for p in queries.sale_payments(conn, sale["id"])), ZERO)
             remaining = owed - settled
             # Only what the TICKET can absorb is a payment. Anything above it left the client's
@@ -955,6 +954,7 @@ def close_ticket_with_debt(on_behalf_of: str = "", tool_context: ToolContext = N
             sale = queries.open_sale(conn, person.specialist_id)
             if sale is None:
                 return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
+            queries.lock_sale(conn, sale["id"])
             lines = queries.sale_lines(conn, sale["id"])
             product_lines = queries.sale_product_lines(conn, sale["id"])
             if not lines and not product_lines:

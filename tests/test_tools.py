@@ -243,6 +243,40 @@ def test_paying_the_whole_total_closes_the_sale_and_returns_the_receipt(working)
     assert "Cobrado — Laura" in answer["receipt"] and "Total: RD$300.00" in answer["receipt"]
 
 
+def test_a_payment_holds_the_ticket_against_a_second_sender(working, conn, monkeypatch):
+    """An owner acting `on_behalf_of` is a SECOND SENDER on one ticket, and the channel's turn lock
+    is per sender — so two payments can be in flight against one balance, and each applying against
+    money the other has not committed yet is an overpayment the register never accounts for.
+
+    The holder takes FOR NO KEY UPDATE deliberately: it conflicts with the lock the ticket now
+    takes and NOT with the key-share an FK insert takes, so a run with that lock gone still reaches
+    the insert and this case can tell the two apart.
+    """
+    from aziza_adk import config
+
+    context, who = working
+    tools.start_ticket("Laura", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    sale_id = queries.open_sale(conn, who["id"])["id"]
+
+    url = config.DATABASE_URL
+    monkeypatch.setattr(
+        config, "DATABASE_URL", f"{url}{'&' if '?' in url else '?'}options=-c%20lock_timeout%3D500"
+    )
+    holder = queries.connect()
+    try:
+        with holder.cursor() as cur:
+            cur.execute("SELECT id FROM sales WHERE id = %s FOR NO KEY UPDATE", (sale_id,))
+        assert (
+            tools.record_payment("efectivo", "300", "0", tool_context=context)["error"]
+            == "backend_unavailable"
+        )
+    finally:
+        holder.rollback()
+        holder.close()
+    assert queries.sale_payments(conn, sale_id) == [], "the payment landed on a held ticket"
+
+
 def test_a_split_payment_keeps_the_ticket_open_until_it_adds_up(working):
     context, _ = working
     tools.start_ticket("Laura", tool_context=context)
