@@ -132,7 +132,7 @@ NOTHING_OWED_MSG = "No tienes nada pendiente con el salón."
 NOT_AN_OWNER_MSG = "Solo una dueña puede registrar el trabajo de otra especialista."
 AFTER_HOURS_MSG = "Fuera del horario del salón esto solo lo registra una dueña."
 BAD_EXTRA_MSG = "¿Ese excedente es propina o hay que darle el vuelto?"
-NOTHING_OWED_MSG = "Esa clienta no debe nada."
+CLIENT_OWES_NOTHING_MSG = "Esa clienta no debe nada."
 NOTHING_OUTSTANDING_MSG = "Esa cuenta ya está saldada. No queda nada por cobrar."
 OWNER_ONLY_MSG = "Eso lo hace una dueña."
 BAD_OWES_MSG = "¿Eso es de productos o del préstamo?"
@@ -894,12 +894,13 @@ def settle_client_debt(
             _, refused = _acting(conn, tool_context, on_behalf_of)
             if refused is not None:
                 return refused
-            found = queries.find_client(conn, client)
-            if found is None:
-                return {"error": "unknown_client", "message": NOTHING_OWED_MSG}
+            named = queries.find_clients(conn, client)
+            if not named:
+                return {"error": "unknown_client", "message": CLIENT_OWES_NOTHING_MSG}
+            found = named[0]
             balance = queries.client_balance(conn, found["id"])
             if balance <= ZERO:
-                return {"error": "nothing_owed", "message": NOTHING_OWED_MSG}
+                return {"error": "nothing_owed", "message": CLIENT_OWES_NOTHING_MSG}
             if paid > balance:
                 # Refused rather than turned into a credit: the salon has no way to hold money
                 # FOR a client, so an overpayment here would simply go missing.

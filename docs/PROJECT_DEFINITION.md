@@ -141,6 +141,10 @@ shape:
   neither, so a service nobody can be charged for cannot exist (§5).
 - Product lines are their own table beside service lines, and the specialist's ledger is a third.
   Both separations are what make the commission base structural rather than remembered (§7).
+- A client is identified by the PAIR `(folded, phone)`, not by either half. A name alone made two
+  people called Carmen one row and one balance; a number alone would make a mother and daughter
+  one client. A NULL phone is somebody who gave no number, and Postgres counts NULLs as distinct
+  in a unique index — so each of those gets her own row rather than joining one heap.
 
 ## §7 · What a specialist earns
 
