@@ -7,11 +7,16 @@ The SVG leaves as a base64 `data:` URL on an `<img>`, never as markup the page s
 `<img>` renders SVG with scripting disabled by specification, so the one place a third party's
 output reaches the document is not also an HTML sink. Base64 rather than percent-encoding because
 segno writes `#000` and a raw `#` in a data URL truncates it at the fragment.
+
+That `<img>` is also why this is a STANDALONE document rather than segno's inline fragment: an
+`<img>` parses its source as its own document, and one with no `xmlns` does not parse at all — the
+page shows a broken-image glyph and nothing anywhere reports why.
 """
 
 from __future__ import annotations
 
 import base64
+import io
 
 import segno
 
@@ -32,8 +37,12 @@ LIGHT = "#ffffff"
 
 
 def svg(url: str) -> str:
-    """The QR for one URL, as a standalone SVG document."""
-    return segno.make(url, error=ERROR_CORRECTION).svg_inline(scale=SCALE, dark=DARK, light=LIGHT)
+    """The QR for one URL, as a standalone SVG document — namespace and all."""
+    out = io.BytesIO()
+    segno.make(url, error=ERROR_CORRECTION).save(
+        out, kind="svg", scale=SCALE, dark=DARK, light=LIGHT, xmldecl=False
+    )
+    return out.getvalue().decode("utf-8")
 
 
 def data_url(url: str) -> str:
