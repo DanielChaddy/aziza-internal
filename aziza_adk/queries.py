@@ -232,6 +232,18 @@ def open_sale(conn: psycopg.Connection, specialist_id: int) -> dict | None:
     )
 
 
+def lock_sale(conn: psycopg.Connection, sale_id: int) -> None:
+    """Hold this ticket for the rest of the transaction.
+
+    Every path that derives money from what is already settled has to read and then write, and the
+    channel's turn lock is per SENDER — an owner acting `on_behalf_of` is a second sender on one
+    ticket. The key-share lock an FK insert takes does not serialize two of those against each
+    other, so without this both read the same balance and both apply against it (§7).
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM sales WHERE id = %(sid)s FOR UPDATE", {"sid": sale_id})
+
+
 def create_sale(
     conn: psycopg.Connection,
     specialist_id: int,

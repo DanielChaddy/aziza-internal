@@ -63,7 +63,7 @@ MAX_JOINS_PER_CODE = 25
 
 #: code fingerprint -> (joins so far, when the token stops verifying). In-process, which is only
 #: viable because the pod is replicas: 1 — deploy/helm/aziza/templates/statefulset.yaml.
-# TODO: lost on restart, so a code minted before one gets its allowance again.
+# TODO: issue #31 — lost on restart, so a code minted before one gets its allowance again.
 _SPENT: dict[str, tuple[int, int]] = {}
 
 
