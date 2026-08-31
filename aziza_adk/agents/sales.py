@@ -38,6 +38,7 @@ SALES_SPEC = AgentSpec(
         tools.amend_expense,
         tools.register_expense,
         tools.void_expense,
+        tools.month_606,
         tools.close_register,
         tools.salon_day,
         tools.client_history,

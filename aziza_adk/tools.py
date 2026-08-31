@@ -14,6 +14,7 @@ anyway: a tool reached some other way must not answer.
 
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import logging
 import re
@@ -37,7 +38,9 @@ from aziza_adk import (
     pay,
     queries,
     receipts,
+    reports,
     session,
+    six_oh_six,
     staff,
 )
 from aziza_adk.money import ZERO
@@ -71,6 +74,7 @@ OWNER_TOOL_NAMES = frozenset(
         "register_expense",
         "amend_expense",
         "void_expense",
+        "month_606",
         "close_register",
         "record_loan",
         "salon_day",
@@ -88,6 +92,7 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "register_expense",
         "amend_expense",
         "void_expense",
+        "month_606",
         "start_ticket",
         "add_service",
         "set_client_gender",
@@ -1903,6 +1908,53 @@ def void_expense(expense_ref: str, tool_context: ToolContext = None) -> dict:
             return {"voided": f"{written['supplier']} — {money.rd(written['total_paid'])}"}
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
+
+
+def month_606(month: str = "", tool_context: ToolContext = None) -> dict:
+    """Hand her a link to one month's 606, and say how much of the month is not in it.
+    Owners only.
+
+    Args:
+        month: Which month, as YYYY-MM. Empty means the one just finished.
+
+    Returns:
+        {"summary": str, "rows": int, "excluded": int} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+
+    asked = dates.parse_date(f"{month.strip()}-01") if month.strip() else _last_month()
+    if asked is None:
+        return {"error": "bad_month", "message": BAD_MONTH_MSG}
+    # A filing that does not say who filed it is worse than none.
+    if not config.SALON_RNC:
+        return {"error": "no_link", "message": NO_REPORT_LINK_MSG}
+
+    url = reports.link_for(asked, now=now().timestamp(), nonce=reports.new_nonce())
+    if not url:
+        return {"error": "no_link", "message": NO_REPORT_LINK_MSG}
+    try:
+        with queries.connect() as conn:
+            last = asked.replace(day=calendar.monthrange(asked.year, asked.month)[1])
+            rows = queries.expenses_for_period(conn, asked, last)
+        left_out = six_oh_six.excluded(rows)
+        return {
+            "summary": receipts.render_606_summary(
+                f"{asked:%Y-%m}", rows_in=len(rows) - left_out, rows_out=left_out, url=url
+            ),
+            "rows": len(rows) - left_out,
+            "excluded": left_out,
+        }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def _last_month() -> dt.date:
+    """The first of the month just finished, which is the one she files."""
+    first = _today().replace(day=1)
+    return (first - dt.timedelta(days=1)).replace(day=1)
 
 
 def salon_day(tool_context: ToolContext = None) -> dict:

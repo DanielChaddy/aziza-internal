@@ -206,9 +206,9 @@ def test_the_join_base_url_is_derived_from_the_ingress_host() -> None:
     """Two spellings of one hostname is how a QR points at nothing. An explicit `env` entry, not a
     `config` key: `configmap-env.yaml` ranges over a plain map and Helm does not re-render values
     as templates, so the same string in values.yaml would reach the pod literally."""
-    assert "name: JOIN_BASE_URL" in _HELPERS
+    assert "name: PUBLIC_BASE_URL" in _HELPERS
     assert ".Values.ingress.host" in _HELPERS
-    assert "JOIN_BASE_URL" not in _code(_CHART / "values.yaml")
+    assert "PUBLIC_BASE_URL" not in _code(_CHART / "values.yaml")
 
 
 def test_every_routed_path_reaches_the_one_workload() -> None:

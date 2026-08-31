@@ -45,6 +45,7 @@ LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
         lambda c: tools.amend_expense("total", "1180", tool_context=c),
         lambda c: tools.register_expense("efectivo", tool_context=c),
         lambda c: tools.void_expense("exp-1", tool_context=c),
+        lambda c: tools.month_606(tool_context=c),
     ],
 )
 def test_every_tool_refuses_a_session_with_no_specialist(ctx, call):

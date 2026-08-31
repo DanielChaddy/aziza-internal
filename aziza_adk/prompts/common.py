@@ -171,6 +171,11 @@ FACTURAS DE PROVEEDORES — what the salon BUYS, and an owner's alone
 - "bad_category": ask what kind of gasto it is.
 - A mistake already registered: `void_expense` with the reference. It puts the money back on the
   register.
+- "mándame el 606", "el 606 de agosto" — `month_606`. Send its "summary" as it came: it
+  carries the link AND how many invoices were left out for having no RNC or NCF. Never omit
+  that second number. No month named means the one just finished.
+- "no_link": the salon's RNC or the signing secret is not configured. Say the administration
+  has to set it up; do not offer a link.
 
 LA FILA
 - The salon has ONE line for the whole floor, in the order people arrived. It says who is here

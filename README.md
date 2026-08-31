@@ -68,7 +68,7 @@ adk web                                       # pick `aziza_adk`, http://localho
 ```
 
 The client's page and the mini app ride on the same app. With `JOIN_LINK_SECRET` and
-`JOIN_BASE_URL` set in `.env`, `http://localhost:8080/mini-app` shows the code and
+`PUBLIC_BASE_URL` set in `.env`, `http://localhost:8080/mini-app` shows the code and
 `/j/<token>` is what it points at. Both refuse everything with no secret configured, which is the
 safe direction.
 

@@ -26,7 +26,7 @@ def signing(monkeypatch):
     """A secret and a base URL, so the module under test is configured rather than disabled."""
     monkeypatch.setattr(config, "JOIN_LINK_SECRET", _SECRET)
     monkeypatch.setattr(config, "JOIN_LINK_SECRET_PREVIOUS", "")
-    monkeypatch.setattr(config, "JOIN_BASE_URL", "https://example.test")
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "https://example.test")
 
 
 def _token(*, now: float = _NOW, nonce: str = "nonce-one") -> str:
@@ -48,7 +48,7 @@ def test_no_secret_means_no_code_rather_than_an_unsigned_one(monkeypatch):
 
 
 def test_no_base_url_means_no_code_either(monkeypatch):
-    monkeypatch.setattr(config, "JOIN_BASE_URL", "")
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "")
     assert join.link_for(7, now=_NOW, nonce="n") == ""
 
 

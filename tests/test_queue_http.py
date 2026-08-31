@@ -35,7 +35,7 @@ def open_salon(monkeypatch):
     """A configured service with the salon open and the clock still."""
     monkeypatch.setattr(config, "JOIN_LINK_SECRET", _SECRET)
     monkeypatch.setattr(config, "JOIN_LINK_SECRET_PREVIOUS", "")
-    monkeypatch.setattr(config, "JOIN_BASE_URL", "https://example.test")
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "https://example.test")
     monkeypatch.setattr(tools, "now", lambda: _OPEN)
     queue_http._SPENT.clear()
     yield

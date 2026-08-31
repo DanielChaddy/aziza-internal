@@ -28,7 +28,16 @@ from channel_telegram.handler import TurnHandler
 from channel_telegram.webhook import create_app
 from google.adk.events import Event, EventActions
 
-from aziza_adk import config, mini_app, queries, queue_http, runtime, session, tools
+from aziza_adk import (
+    config,
+    mini_app,
+    queries,
+    queue_http,
+    report_http,
+    runtime,
+    session,
+    tools,
+)
 
 logger = logging.getLogger("aziza_adk.telegram")
 
@@ -304,5 +313,7 @@ app = create_app(
 # for. It also inherits the httpx silencing above, which a second process would need a copy of.
 app.include_router(queue_http.create_router())
 app.include_router(mini_app.create_router())
+# The owner's report rides on the same app for the same reason the join page does.
+app.include_router(report_http.create_router())
 
 telemetry.instrument_fastapi(app)
