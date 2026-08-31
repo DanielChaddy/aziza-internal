@@ -107,13 +107,25 @@ def test_an_unregistered_sender_never_reaches_the_graph(client, known, turn, fak
 
 
 def test_an_unregistered_sender_is_told_why_rather_than_ignored(client, known, turn, fake_http):
-    """Silence would read as a broken bot to someone who is about to ask the administration."""
-    fake_http(bot_client, sent())
+    """Silence would read as a broken bot to someone who is about to ask the administration. What
+    she is TOLD is the assertion here; that no turn ran for her is the case above."""
+    http = fake_http(bot_client, sent())
     body = _update(text="hola")
     body["message"]["from"]["id"] = 999999
     body["message"]["chat"]["id"] = 999999
-    reply = client.post("/simulate", json={"sender": "999999", "text": "hola"}).json()
-    assert reply["reply"] == channel.NOT_REGISTERED_TEXT
+    _post(client, body)
+    assert http.requests[0]["json"]["text"] == channel.NOT_REGISTERED_TEXT
+
+
+def test_the_app_as_it_ships_exposes_no_simulate_route(client):
+    """`/simulate` authenticates nobody — `sender` is a field the caller types — so anybody who
+    reaches it is any specialist whose Telegram id they know, and this repository is public.
+
+    The Ingress not routing it is one layer (tests/test_chart.py); this is the other, because a
+    port-forward and a second Ingress path both go straight past the first.
+    """
+    assert "/simulate" not in {getattr(route, "path", "") for route in channel.app.routes}
+    assert client.post("/simulate", json={"sender": "999999", "text": "hola"}).status_code == 404
 
 
 # --- [2] The transcriber is attached ------------------------------------------------------
