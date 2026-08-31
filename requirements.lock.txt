@@ -1,0 +1,131 @@
+# GENERATED — do not hand-edit. The exact package set the Dockerfile installs.
+#
+# Why this file exists: requirements.txt pins direct dependencies only, so every transitive one
+# floats and two builds of one commit install different software. On Kubernetes the image is the
+# unit of deploy and rollback, so `helm rollback` to revision N only means something if revision N
+# pins an exact package set.
+#
+# THE SEVEN agent-platform PACKAGES BELOW WERE NOT PART OF THE RESOLVE, and that is safe for one
+# specific reason: every dependency they declare is PUBLIC (agent-adk -> google-adk[db];
+# channel-telegram -> fastapi, httpx, conversation-core; agent-telemetry -> four opentelemetry-*;
+# agent-transcription -> google-genai, which google-adk already constrains; agent-webview ->
+# fastapi; conversation-core and agent-evalkit declare none), and all of those constraints were in
+# the resolve input — the four opentelemetry-* by hand, since requirements.txt names none of them
+# and only agent-telemetry asks for them. So there is nothing private for a resolve to discover and
+# the closure below is what pip would have produced with the credential. If any of the seven ever
+# declares a dependency that is not already here, this reasoning stops holding and the lock must be
+# regenerated WITH the credential — read agent-platform's packages/*/pyproject.toml before assuming
+# it still holds.
+#
+# They are pinned to the COMMIT rather than the tag. A tag can move, a sha cannot, which is the
+# same reason this file exists. requirements.txt keeps the tag: that one names a version, this one
+# names an artifact. The trailing tag comment is what tests/test_chart.py holds against
+# requirements.txt — the two files can otherwise name different versions and every build succeeds.
+#
+# Regenerate after editing requirements.txt, or after any of the seven pins moves. Must be
+# linux/amd64 — the cluster nodes are amd64. No credential is needed:
+#   grep -vE '^\s*#|^\s*$' requirements.txt | grep -v 'git+https' > /tmp/r.txt
+#   # then append the constraints the seven packages declare, from their pyproject.toml files
+#   docker run --rm --platform linux/amd64 -v /tmp/r.txt:/r.txt:ro python:3.12-slim \
+#     sh -c 'pip install --no-cache-dir -q -r /r.txt && pip freeze --exclude-editable'
+#   (then re-add this header and the seven lines below, tag comments included)
+#
+# Regenerating also BUMPS every floating transitive to whatever is current — that is the point of
+# the file, but it means a one-package change lands as a wider diff. Read it before deploying.
+#
+# Resolved on linux/amd64, python:3.12-slim.
+
+# --- agent-platform, pinned by commit (hand-added; see the header) ---
+agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-adk  # agent-adk-v0.1.0
+agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-evalkit  # agent-evalkit-v0.1.0
+agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-telemetry  # agent-telemetry-v0.1.0
+agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@8488d2b4af3753718c6698f944735d6edd422a13#subdirectory=packages/transcription  # agent-transcription-v0.2.0
+agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@d8528c1fc1bae22231298800e20c5c66cb7e330e#subdirectory=packages/webview  # agent-webview-v0.1.0
+channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@2ead714567b969b3212c32d3d0e214032a4bce37#subdirectory=packages/channel-telegram  # channel-telegram-v0.1.0
+conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@a2e58f0386a0830864885c9a3be7638a9d969c2c#subdirectory=packages/conversation-core  # conversation-core-v0.2.1
+
+# --- the resolved closure ---
+aiosqlite==0.22.1
+alembic==1.19.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+asgiref==3.12.1
+attrs==26.1.0
+Authlib==1.8.0
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+cryptography==50.0.1
+distro==1.9.0
+fastapi==0.139.0
+google-adk==2.3.0
+google-api-core==2.34.0
+google-auth==2.57.0
+google-cloud-core==2.7.0
+google-cloud-monitoring==2.31.0
+google-cloud-spanner==3.70.0
+google-genai==2.20.0
+googleapis-common-protos==1.75.2
+graphviz==0.21
+greenlet==3.5.5
+grpc-google-iam-v1==0.14.5
+grpc-interceptor==0.15.4
+grpcio==1.83.1
+grpcio-status==1.83.1
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.19
+iniconfig==2.3.0
+joserfc==1.7.5
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+Mako==1.4.1
+MarkupSafe==3.0.3
+mmh3==5.3.0
+opentelemetry-api==1.42.1
+opentelemetry-exporter-otlp-proto-common==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1
+opentelemetry-instrumentation==0.63b1
+opentelemetry-instrumentation-asgi==0.63b1
+opentelemetry-instrumentation-fastapi==0.63b1
+opentelemetry-proto==1.42.1
+opentelemetry-resourcedetector-gcp==1.14.0
+opentelemetry-sdk==1.42.1
+opentelemetry-semantic-conventions==0.63b1
+opentelemetry-util-http==0.63b1
+packaging==26.3
+pluggy==1.6.0
+proto-plus==1.28.4
+protobuf==6.33.6
+psycopg==3.2.3
+psycopg-binary==3.2.3
+pyasn1==0.6.4
+pyasn1_modules==0.4.2
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pytest==8.3.4
+python-dotenv==1.2.3
+python-multipart==0.0.32
+PyYAML==6.0.3
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.6.3
+segno==1.6.6
+sniffio==1.3.1
+SQLAlchemy==2.0.52
+sqlalchemy-spanner==1.20.0
+sqlparse==0.6.0
+starlette==1.6.0
+tenacity==9.1.4
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzlocal==5.4.4
+urllib3==2.7.0
+uvicorn==0.49.0
+watchdog==6.0.0
+websockets==15.0.1
+wrapt==2.4.0
