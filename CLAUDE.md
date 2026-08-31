@@ -63,6 +63,10 @@ The venv is Python 3.12, built with `uv venv --python 3.12 --seed .venv`.
 what the specialist said against the catalog and reads the price off the row it found. The moment
 a price can arrive from the model, the salon's own figures stop being the ones on the receipt.
 
+The one place the salon has no figure of its own is a supplier's invoice, and the answer there is
+the same shape: `register_expense` takes no amount either. Every figure comes off the row she was
+shown, and `fiscal.py` refuses one that does not add up — docs/PROJECT_DEFINITION.md §15.
+
 **Identity is resolved at the edge, not in a tool.** `channel.py` matches the Telegram id against
 `specialists` before the Runner runs, and an unregistered sender never reaches the graph. The
 SENDER is never an argument, and that half has no exceptions.
@@ -112,10 +116,15 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | what a client owes, and change | `queries.client_*`, `tools.record_payment`, §7 |
 | the register, and what it should hold | `queries.expected_register`, `tools.close_register`, §7 |
 | which price column a client reads | `names.py`, and `tests/test_names.py` |
+| what an invoice must look like | `fiscal.py`, and `tests/test_fiscal.py`, §15 |
+| what the salon bought, and the register | `queries.record_expense`, `tools.draft_expense`, §15 |
+| the file DGII is sent | `six_oh_six.py`, and `tests/test_six_oh_six.py`, §15 |
+| the link she taps for a report | `reports.py` and `report_http.py`, §15 |
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 
 `money.py`, `catalog.py`, `names.py`, `staff.py`, `clients.py`, `arrivals.py`, `receipts.py`,
 `hours.py`, `pay.py`, `join.py`, `qr.py`, `queue_form.py`, `queue_pages.py`, `init_data.py`,
+`fiscal.py`, `six_oh_six.py`, `reports.py`,
 `catalog_data.py`, `staff_data.py` and `demo_data.py` reach no database and no model,
 and that is load-bearing rather than tidy: the commission arithmetic, the split-payment balance,
 the price column a name selects, which of two Marías a number means and the rendered template are
