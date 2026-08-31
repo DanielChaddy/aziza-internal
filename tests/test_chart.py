@@ -85,6 +85,14 @@ def test_simulate_is_not_routed() -> None:
     assert "/simulate" not in _ING
 
 
+def test_the_chart_never_switches_simulate_on() -> None:
+    """The route is off unless `ENABLE_SIMULATE` says otherwise (aziza_adk/config.py), so the chart
+    leaving it unset is what makes the not-routed rule above a second layer rather than the only
+    one. A value that switched it on would put an unauthenticated sender field in the pod."""
+    for path in sorted(_CHART.rglob("*.yaml")) + sorted(_CHART.rglob("*.tpl")):
+        assert "ENABLE_SIMULATE" not in _code(path), f"{path.name} switches /simulate on"
+
+
 def test_ingress_is_an_allowlist_with_no_catch_all() -> None:
     for path in ("/webhook", "/healthz", "/health", "/j", "/mini-app"):
         assert f'"{path}"' in _ING or f"path: {path}" in _ING

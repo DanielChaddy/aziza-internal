@@ -227,10 +227,8 @@ app = create_app(
     turn_timeout_s=config.MODEL_TURN_TIMEOUT_SECONDS,
     fallback_reply=FALLBACK_TEXT,
     title="Salón Aziza — Telegram webhook",
-    # /simulate runs a turn and RETURNS the reply instead of sending it, so the assistant can be
-    # exercised without Telegram. It authenticates nobody — `sender` is a field the caller types —
-    # so it must never have a route in an Ingress.
-    enable_simulate=True,
+    # Off unless ENABLE_SIMULATE says otherwise, because it authenticates nobody — config.py.
+    enable_simulate=config.ENABLE_SIMULATE,
     transcriber=_transcribe,
     # The channel's only reporting seam, and it carries the delivery result: a failed send happens
     # after the dedupe claim is taken, so the retry is deduped away and the turn records as a

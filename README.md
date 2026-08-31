@@ -75,14 +75,15 @@ safe direction.
 One turn through the channel without Telegram:
 
 ```bash
-./.venv/bin/uvicorn aziza_adk.channel:app --port 8080
+ENABLE_SIMULATE=1 ./.venv/bin/uvicorn aziza_adk.channel:app --port 8080
 curl -sX POST localhost:8080/simulate -H 'content-type: application/json' \
      -d '{"sender":"700000001","text":"Le hice manicure y pedicure a Laura"}'
 ```
 
 `700000001` is a seeded specialist. Any other id gets the "not registered" line and no model call
-— which is the point. `/simulate` authenticates nobody, so it must never have a route in an
-Ingress.
+— which is the point. `/simulate` authenticates nobody: `sender` is a field the caller types, so
+anybody who reaches it is any specialist whose Telegram id they know. Hence the switch, off unless
+set, and no route for it in an Ingress — two layers, because a port-forward goes past the second.
 
 ### Against real Telegram
 

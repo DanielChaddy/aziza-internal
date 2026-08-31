@@ -171,15 +171,15 @@ and Telegram deliveries in that window are lost rather than queued. Do it when n
 
 ## What is not routed
 
-`/simulate` runs a turn as whatever sender it is given and authenticates nobody. `ingress.yaml`
-is an allowlist with no catch-all, so it is unreachable from the internet — and a route added to
-that list later is a decision, not an accident. Reach it with a port-forward:
+`/simulate` runs a turn as whatever sender it is given and authenticates nobody, so on the cluster
+it does not exist: `ENABLE_SIMULATE` is unset here and the route is never mounted. `ingress.yaml`
+is the other layer — an allowlist with no catch-all, so a route added to that list later is a
+decision rather than an accident, and a port-forward past it reaches a 404.
 
-```bash
-kubectl -n z-aziza port-forward sts/aziza 8080:8080
-curl -sX POST localhost:8080/simulate -H 'content-type: application/json' \
-     -d '{"sender":"700000001","text":"Le hice manicure y pedicure a Laura"}'
-```
+The chart exposes no value that turns it on, deliberately: this repository is public, so for as
+long as that route exists every specialist whose Telegram id is known is impersonable by whoever
+reaches the pod. Exercising a turn without Telegram is a LOCAL thing — the root `README.md` § Run it
+owns that recipe.
 
 ## Why the webhook cannot be scaled
 

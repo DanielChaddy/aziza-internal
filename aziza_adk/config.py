@@ -108,3 +108,10 @@ SUMMARY_SEND_MODE: str = os.getenv("SUMMARY_SEND_MODE", "simulate").strip().lowe
 # --- Gates ------------------------------------------------------------------
 # 1 turns an absent database from skips into failures. What CI sets.
 REQUIRE_DB: bool = _flag("REQUIRE_DB", False)
+
+# --- One turn without Telegram ----------------------------------------------
+# `/simulate` runs a turn and returns the reply, and it AUTHENTICATES NOBODY: `sender` is a field
+# the caller types, so anybody who reaches it is any specialist whose Telegram id they know.
+# Off unless switched on, so reaching the pod is not enough — the Ingress not routing it is the
+# other layer, and a port-forward goes straight past that one.
+ENABLE_SIMULATE: bool = _flag("ENABLE_SIMULATE", False)
