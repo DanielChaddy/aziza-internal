@@ -1,7 +1,8 @@
-"""What the session remembers: who is talking, and which ticket they have actually been shown.
+"""What the session remembers: who is talking, what they have been shown, and the last photo.
 
-Two facts and nothing else. `tools.py` writes them, `guards.py` enforces them, and neither reads
-the other. Values are plain strings because the served session store persists this state as JSON.
+Four facts and nothing else. `tools.py` and `channel.py` write them, `guards.py` enforces them,
+and none of the three reads another. Values are plain strings because the served session store
+persists this state as JSON.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ SPECIALIST_KEY = "specialist"
 #: The one role that widens authorization (docs/PROJECT_DEFINITION.md §3).
 OWNER = "owner"
 QUOTED_KEY = "quoted"
+EXPENSE_KEY = "expense_shown"
+PHOTO_KEY = "photo"
 
 
 def specialist(context: Any) -> dict:
@@ -102,3 +105,35 @@ def _write(context: Any, key: str, value: dict) -> None:
     container = state.container(context)
     if container is not None:
         container[key] = value
+
+
+def was_expense_shown(context: Any, expense_ref: str, total: Decimal) -> bool:
+    """Has THIS staged invoice, at THIS total, been rendered for her in full?
+
+    The same gate as `was_quoted` and for the same reason: keyed on the total as well as on the
+    row, so amending a figure un-authorizes the confirmation she gave for the old one. The row in
+    the database is the source; this is only the witness that she read it (§15).
+
+    Fails closed on anything it cannot read.
+    """
+    if not expense_ref:
+        return False
+    seen = state.mapping(context, EXPENSE_KEY)
+    return seen.get("expense_ref") == expense_ref and seen.get("total") == str(total)
+
+
+def remember_expense_shown(context: Any, expense_ref: str, total: Decimal) -> None:
+    _write(context, EXPENSE_KEY, {"expense_ref": expense_ref, "total": str(total)})
+
+
+def photo(context: Any) -> str:
+    """The transport's handle on the last picture this sender sent, or "".
+
+    Written at the edge and never an argument: a model asked for a handle produces a plausible
+    one, and a tool that accepted it could be called on a typed description of an invoice (§15).
+    """
+    return str(state.mapping(context, PHOTO_KEY).get("file_id") or "")
+
+
+def remember_photo(context: Any, file_id: str) -> None:
+    _write(context, PHOTO_KEY, {"file_id": file_id})

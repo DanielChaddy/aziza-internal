@@ -25,7 +25,8 @@ charging a specialist for what she takes for herself, recording what she pays ag
 reporting each specialist's day.
 
 An owner does all of the above against a named specialist as well as herself, and may
-read that specialist's day.
+read that specialist's day. She also records what the salon BUYS, by photographing a supplier
+invoice, and downloads a month of those as the report DGII is filed (§15).
 
 Out of scope, and the assistant says so rather than improvising: appointments, changing a price,
 discounts, another specialist's figures **when the sender is not an owner**, anything about a
@@ -384,6 +385,12 @@ A voice note takes the same path a typed message does: the channel transcribes i
 `agent-transcription` and runs the text as an ordinary turn, so it is screened by whatever screens
 text rather than arriving as a shape no guard reads.
 
+**A photo does NOT, and that difference is why §15 is shaped the way it is.** It reaches the model
+as an image part, and the input screen reads text parts — so what is written inside a picture is
+unscreened by code, and there is no transcription step that could flatten it into something the
+screen sees. The bytes are fetched through `channel-telegram`'s `media.image_bytes`, which takes
+the message and nothing else, so nothing here names one transport's argument list.
+
 Replies are plain text with no parse mode. One unescaped character in the platform's markup
 dialect rejects the whole message, and a reply full of prices and decimal points is the worst case
 for that — a rejected body is silence, not a formatting glitch.
@@ -536,3 +543,160 @@ a split is for. The cost is that the join page shares the webhook's fate during 
 trigger for revisiting it is the one the runbook already names: more than one replica forces the
 split, and that is a code project rather than a chart change.
 
+
+## §15 · What the salon buys
+
+**An owner photographs a supplier invoice, reads back what the assistant made of it, and registers
+it.** Nobody else can: `on_media` refuses a specialist who holds no `owner` role at the edge,
+before the bytes are fetched and before any model call.
+
+**That refusal is the containment rather than a convenience.** The image reaches the model as a
+picture and the input screen reads text (§9), so text rendered inside one is unscreened by code, and
+nothing here can change that. What bounds it is everything else being narrow: only owners send a
+photo at all, five tools are reachable from it, none takes an amount that bypasses a render, and
+the write is gated on a block a human read. The worst a successful injection achieves is a draft the
+owner declines.
+
+**The handle on the photo is written to session state at the edge and is never a tool argument.** A
+model asked for one produces something plausible, so a tool that accepted it could be called on a
+typed description of an invoice. `draft_expense` refuses without one.
+
+### The flow is the ticket's, in miniature
+
+`draft_expense` records nothing: it stages a row and returns a rendered block, which is what she
+reads and the only thing that authorizes writing. `register_expense` writes it and **takes no
+amount** — every figure comes off the row she was shown, so there is no parameter in which a
+misreading could arrive a second time. That is the rule about a price never being an argument (§3),
+reaching the one part of this service where the salon's own figures are not the source.
+
+The gate is `session.was_expense_shown`, keyed on the row AND its total exactly as `was_quoted` is.
+The row in the database is the source and session state is only the WITNESS that she read it, which
+is the way round `record_payment` already works.
+
+**A second photograph replaces the staged one** rather than colliding with it: photographing the
+next invoice while the first is still on screen is the ordinary case. The old draft is deleted
+rather than kept, because a draft is a question waiting for an answer and keeping every misread
+photograph would leave a wrong figure beside a right one in the table the 606 reads.
+
+**A draft goes stale, and the bound is in the query.** A *sí* long afterwards answers a question
+whose figures she has stopped looking at, so a draft older than `EXPENSE_DRAFT_TTL_MINUTES` is
+simply not found and she sends the photo again.
+
+**She corrects one field at a time**, with `amend_expense`. Re-drafting would ask the model to
+re-emit every figure from a photo it may no longer be attending to, and the nasty failure there is
+that she corrects the ITBIS and the total moves in silence. Correcting one field necessarily breaks
+the reconciliation for a moment — the ITBIS has moved and the total has not — so **the draft is a
+scratchpad that says what is wrong, and the check runs again at the moment of writing.** That is
+where the gate is.
+
+**`void_expense` exists because the register was already lowered.** Without it the first misread
+that got through would be permanently wrong in what the drawer should hold. A status flip, never a
+delete, and refused into a day already closed for the reason below.
+
+### What holds a misread still
+
+The model reads figures off a photograph, so a confirmation she skims is not a control.
+`aziza_adk/fiscal.py` holds what is decidable from the values alone — no database, no model and no
+clock, so the day a date is judged against is a parameter as it is in `hours.py`.
+
+Refused: the parts not adding up to what she paid, an id that is neither nine digits nor eleven, a
+comprobante that is not one of the shapes, a date in the future or over a year old, and a supplier
+nobody named. **`Monto Facturado` is derived rather than passed**, because DGII defines it as
+*Bienes + Servicios* — so there is no field in which a misread of it could arrive. `total_paid` is
+the opposite: it is what left the account, so it is reconciled against the parts and never derived
+from them, and a mismatch names both figures because neither can be trusted over the other.
+
+Shown and not refused: an ITBIS rate that is neither 18% nor zero, because exemptions and selective
+consumption both break 18% and a refusal there would refuse real invoices; an amount over
+`LARGE_EXPENSE_THRESHOLD`, because a salon buys a chair and a ceiling that refused one would be
+raised until it refused nothing — though a misplaced decimal point is the highest-cost error there
+is, which is what the notice is for; and a *consumidor final* comprobante, which gives no ITBIS
+credit.
+
+**The RNC's check digit is not implemented.** It would be the most valuable check available — a
+transposed digit is the likeliest misreading — but `conversation_core.identity` deliberately ships
+no check digit, so adding one is a decision rather than a fix. A wrong notice is ignored; a wrong
+refusal is a feature abandoned.
+
+**Nothing verifies the photograph was of an invoice at all.** Handed a picture of a client's nails
+the model will produce plausible fields. The only defence is the person reading the block, which is
+why the supplier and the comprobante are on it verbatim and not only the money.
+
+### Two dates, and the day the money left
+
+`invoice_date` is what the paper says. `business_date` is the day the money left an account — what
+the register reads AND what the 606 files as *Fecha Pago*, so it is one column rather than two that
+could disagree. It defaults to today, because the drawer she is short of is today's, and
+`register_expense` takes a `paid_on` for an invoice she paid on Monday and is entering on Friday.
+
+**A late registration into a day already closed is refused.** `register_closes.expected_*` is a
+frozen snapshot precisely so nothing entered afterwards can absorb into it (§7), and reaching back
+to lower it would contradict that on purpose.
+
+**An invoice bought on terms moves no money**, so it has no method and no business date and never
+touches the register. The pair is enforced by a `CHECK`, the same shape and the same argument as
+`specialist_ledger.method`. Without it the first invoice on thirty-day terms would manufacture a
+shortfall in a drawer nothing came out of.
+
+### The register, and why the spend is visible
+
+`queries.expected_register` subtracts a registered expense for its method, exactly as it subtracts a
+loan. All three of its callers want that — the close, the salon-wide day, and the end-of-day message
+that asks an owner to count — so `salon_day` picking it up is correct rather than an oversight.
+
+**What was spent is listed wherever the expectation drops.** A figure appearing from nowhere is the
+kind people dispute later (§7), and a count is only useful as a question about the difference: an
+expectation quietly lower is that figure. Listed, never subtracted twice.
+
+**A staged draft does not hold the close hostage**, unlike an open ticket. A draft is not money that
+moved, and blocking the count on a photograph she forgot about is the wrong trade; the TTL reaps it.
+
+### The 606, and what is not verified about it
+
+`aziza_adk/six_oh_six.py` renders one month as the pipe-delimited file DGII is sent. It is the one
+render here that does not use `money.rd`: a machine reads it and would reject `RD$1,000.00`. For the
+same reason nothing in it is named `*_TEXT`, which would put a pipe character in front of the
+register sweep.
+
+`ITBIS por Adelantar` is derived from the columns it is made of rather than stored at zero, because
+a zero understates the credit the salon is owed.
+
+**Rows that cannot be a 606 line are excluded, and how many is said out loud.** An invoice with no
+RNC and no comprobante is still registered — the money left the drawer, and the register has to know
+— but it cannot be filed, and an owner handed a report quietly missing a third of her invoices would
+file it.
+
+> **THE COLUMN LIST AND ITS CODE VALUES ARE NOT VERIFIED.** The governing norm is General Norm
+> 07-2018 as amended by 05-2019, and the authority is DGII's current instructivo and the
+> pre-validation spreadsheet on its portal. What this repository implements was read off neither.
+> `db/schema.sql` carries no `ALTER`, so a wrong shape is a rebuild rather than a migration — and
+> four facts would force one: that *Fecha Pago* is one date rather than one per instalment, that
+> *Bienes* and *Servicios* are two amounts on one record rather than a line-item breakdown, that
+> *Tipo ID* is derivable from the digit count, and that `(RNC, NCF)` identifies an invoice. The
+> treatment columns being zero is not among them: they are already columns, so the salon becoming
+> an ITBIS-retaining agent is a behaviour change and not a schema one.
+
+**The same invoice cannot be registered twice.** It would come off the register twice and DGII
+rejects a repeated comprobante too, so `(rnc, ncf)` is unique among registered rows — refused by the
+insert, because the constraint is what guarantees it. Voided rows are outside the index: a misread
+that got through is voided and re-entered.
+
+**`Forma de Pago` is derived from the method and is LOSSY.** The salon's accounts are cash,
+Banreservas and BHD, and a bank name cannot say whether the money moved as a transfer or on a card,
+which the format distinguishes. It is stored on the row rather than derived at render time, so the
+derivation is visible as a default rather than passing for a fact.
+
+### The link she taps
+
+`month_606` mints a short-lived signed link, and the download is one route on the app that already
+serves the join page. A token is a CAPABILITY as §13's is: it proves somebody was sent this link and
+says nothing about who they are.
+
+**Its own signing secret**, never the join page's — sharing would mean rotating the code a client
+scans in order to rotate the link an owner holds. **No spend counter**, because link scanners and
+in-app browsers fetch a URL before anybody taps it (§13) and a single-use link would be spent by the
+chat's own preview; a download is a read, and the TTL is the bound. The month travels in the token
+rather than in the path, so one link means one month.
+
+**With no `SALON_RNC` or no signing secret nothing is minted.** A filing that does not say who filed
+it is worse than none, and an unsigned link is worse than no link.

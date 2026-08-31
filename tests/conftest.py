@@ -88,6 +88,12 @@ def sentinel(conn):
         # `specialist_id` is somebody else entirely.
         sentinels = "(SELECT id FROM specialists WHERE specialist_ref LIKE %(prefix)s)"
         with conn.cursor() as cur:
+            # `recorded_by` has no ON DELETE action, the same as on `sales`: what the salon
+            # bought is not erased because whoever entered it left.
+            cur.execute(
+                f"DELETE FROM expenses WHERE recorded_by IN {sentinels}",
+                {"prefix": SENTINEL_REF + "%"},
+            )
             cur.execute(
                 f"DELETE FROM specialist_ledger "
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",

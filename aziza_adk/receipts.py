@@ -368,12 +368,17 @@ def render_register_prompt(
     day: dt.date,
     expected: dict[str, Decimal],
     tips_owed: Sequence[tuple[str, Decimal]] = (),
+    spent: Sequence[tuple[str, Decimal]] = (),
 ) -> str:
     """What an owner is asked at closing: count these, and hand these over.
 
     The expected figures are shown rather than withheld. A count made blind catches a miscount
     and nothing else; a count made against a figure is a question about the difference, which is
     the only thing worth asking.
+
+    `spent` is what the salon bought today, and it is here because those figures are already OFF
+    the expectation above: an expectation quietly lower is exactly the figure §7 says people
+    dispute later. Listed, never subtracted again.
     """
     rows = [
         f"Cierre del {spanish_date(day)}. Cuadra la caja cuando puedas.",
@@ -383,7 +388,88 @@ def render_register_prompt(
         f"• Banreservas: {rd(expected['banreservas'])}",
         f"• BHD: {rd(expected['bhd'])}",
     ]
+    if spent:
+        rows += ["", "Ya descontado de lo anterior — gastos de hoy:"]
+        rows += [f"• {supplier} — {rd(amount)}" for supplier, amount in spent]
     if tips_owed:
         rows += ["", "Propinas por entregar:"]
         rows += [f"• {name} — {rd(amount)}" for name, amount in tips_owed]
+    return "\n".join(rows)
+
+
+#: What each notice on a staged invoice says. Keyed by `fiscal.Problem.code`, so a notice added
+#: there without a sentence here is a KeyError in a test rather than a silence in a turn.
+EXPENSE_NOTICE_TEXT = {
+    "total_mismatch": "Las partidas ya no suman el total. Corrígeme el total también.",
+    "outside_606": "Sin RNC ni NCF, así que la registro pero no entra en el 606.",
+    "odd_itbis_rate": "El ITBIS no da el 18%. Revísalo si la factura no es exenta.",
+    "large_amount": "Ese monto es alto para una factura del salón. Confírmame que está bien.",
+    "consumer_ncf": "Ese NCF es de consumidor final, así que no da crédito de ITBIS.",
+}
+
+
+def render_expense_draft(
+    supplier: str,
+    total: Decimal,
+    *,
+    ncf: str,
+    invoice_date: dt.date,
+    category: str,
+    bienes: Decimal = ZERO,
+    servicios: Decimal = ZERO,
+    itbis: Decimal = ZERO,
+    propina_legal: Decimal = ZERO,
+    notices: Sequence[str] = (),
+) -> str:
+    """What she reads before anything is written, and the only thing that authorizes writing it.
+
+    The supplier and the NCF are on it verbatim, not only the money: nothing in the code can tell
+    that the photograph was of an invoice at all, so those two are what let HER tell (§15).
+
+    The notices come last and the question after them, because §4 allows one question and this
+    block has to end with it.
+    """
+    rows = [
+        f"Factura de {supplier}",
+        f"NCF: {ncf or 'sin NCF'}",
+        f"Fecha: {spanish_date(invoice_date)}",
+        f"Tipo: {category}",
+        "",
+    ]
+    if bienes > ZERO:
+        rows.append(f"• Bienes: {rd(bienes)}")
+    if servicios > ZERO:
+        rows.append(f"• Servicios: {rd(servicios)}")
+    if itbis > ZERO:
+        rows.append(f"• ITBIS: {rd(itbis)}")
+    if propina_legal > ZERO:
+        rows.append(f"• Propina legal: {rd(propina_legal)}")
+    rows += ["", f"Total pagado: {rd(total)}"]
+    if notices:
+        rows += ["", *notices]
+    rows += ["", "¿La registro así?"]
+    return "\n".join(rows)
+
+
+def render_expense_registered(
+    supplier: str, total: Decimal, *, method: str | None, on_606: bool
+) -> str:
+    """The salon's record of one invoice, as she is told it landed."""
+    how = METHOD_LABELS.get(method or "", "a crédito")
+    rows = [f"Registrado: {supplier} — {rd(total)} ({how})"]
+    if not on_606:
+        rows.append("No entra en el 606.")
+    return "\n".join(rows)
+
+
+def render_606_summary(month: str, *, rows_in: int, rows_out: int, url: str) -> str:
+    """The month's 606, and how much of the month is NOT in it.
+
+    The excluded count is not a nicety: a report quietly missing a third of her invoices is one
+    she would file, and nothing downstream would tell her (§15).
+    """
+    rows = [f"606 de {month}: {rows_in} factura(s)."]
+    if rows_out:
+        rows.append(f"{rows_out} quedaron fuera por no tener RNC ni NCF.")
+    rows += ["", url]
     return "\n".join(rows)

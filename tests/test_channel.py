@@ -54,12 +54,30 @@ def known(monkeypatch):
 
 
 @pytest.fixture
+def owner(monkeypatch):
+    """A registered OWNER, which is the only sender a photo reaches anything from (§15)."""
+    who = {
+        "id": 2,
+        "specialist_ref": "esp-002",
+        "full_name": "Zoila Dueña",
+        "disciplines": [],
+        "roles": ["owner"],
+    }
+
+    async def lookup(user_id):
+        return who if user_id == SENDER else None
+
+    monkeypatch.setattr(channel, "specialist_for", lookup)
+    return who
+
+
+@pytest.fixture
 def turn(monkeypatch):
     """Record what reached the graph, without building one."""
     seen: list[tuple[str, str]] = []
 
-    async def run(user_id, who, text):
-        seen.append((user_id, text))
+    async def run(user_id, who, text, **carried):
+        seen.append((user_id, text, carried))
         return "listo"
 
     monkeypatch.setattr(channel, "run_turn", run)
@@ -91,7 +109,7 @@ def _post(client, body, secret=SECRET):
 def test_a_registered_specialist_reaches_the_graph(client, known, turn, fake_http):
     fake_http(bot_client, sent())
     _post(client, _update(text="le hice manicure a Laura"))
-    assert turn == [(SENDER, "le hice manicure a Laura")]
+    assert turn == [(SENDER, "le hice manicure a Laura", {})]
 
 
 def test_an_unregistered_sender_never_reaches_the_graph(client, known, turn, fake_http):
@@ -149,7 +167,7 @@ def test_a_voice_note_is_transcribed_and_run_as_a_typed_turn(
     fake_http(media, file_found(), FakeResponse(200, content=b"opus-bytes"), sent())
 
     _post(client, _update(voice={"file_id": "AwAC", "mime_type": "audio/ogg", "duration": 3}))
-    assert turn == [(SENDER, "le hice manicure a Laura")]
+    assert turn == [(SENDER, "le hice manicure a Laura", {})]
     assert heard["mime"] == "audio/ogg" and heard["bytes"] == b"opus-bytes"
     assert heard["language"] == "Spanish", "a hint about what to expect, never a translation"
 
@@ -184,12 +202,82 @@ def test_a_voice_note_that_yields_no_words_says_so_rather_than_claiming_speech_i
 # --- [3] Everything else the transport can hand over --------------------------------------
 
 
-def test_a_photo_is_refused(client, known, turn, fake_http):
-    """There is no flow here a photo belongs to."""
+def test_a_photo_from_someone_who_is_not_an_owner_is_refused_at_the_edge(
+    client, known, turn, fake_http
+):
+    """Refused before any fetch and before any model call. The input screen reads text parts only,
+    so admitting only owners is what keeps the unscreened surface two people wide (§15)."""
     http = fake_http(bot_client, sent())
     _post(client, _update(photo=[{"file_id": "b"}]))
     assert turn == []
     assert http.requests[0]["json"]["text"] == channel.MEDIA_REFUSED_TEXT
+
+
+def test_a_photo_from_a_stranger_is_refused_before_the_owner_check(client, turn, fake_http):
+    """Identity first, always: an unregistered sender's picture reaches nothing."""
+    http = fake_http(bot_client, sent())
+    _post(client, _update(photo=[{"file_id": "b"}]))
+    assert turn == []
+    assert http.requests[0]["json"]["text"] == channel.NOT_REGISTERED_TEXT
+
+
+def test_an_owners_photo_reaches_the_graph_with_its_bytes_and_its_handle(
+    client, owner, turn, monkeypatch, fake_http
+):
+    """The caption is the turn's words and the handle is written to state, never passed as an
+    argument — which is what stops a tool being called on a description of an invoice (§15)."""
+
+    async def _bytes(msg):
+        return b"jpeg", "image/jpeg"
+
+    monkeypatch.setattr(channel.media, "image_bytes", _bytes)
+    fake_http(bot_client, sent())
+    _post(client, _update(photo=[{"file_id": "B7"}], caption="factura de materiales"))
+    assert turn == [
+        (
+            SENDER,
+            "factura de materiales",
+            {"image": b"jpeg", "mime": "image/jpeg", "photo_file_id": "B7"},
+        )
+    ]
+
+
+def test_a_photo_whose_bytes_never_arrive_says_so_rather_than_blaming_the_shape(
+    client, owner, turn, monkeypatch, fake_http
+):
+    """Telling her photos are somebody else's job invites the wrong retry when the fetch is what
+    failed — the same split as a voice note that yielded no words."""
+
+    async def _bytes(msg):
+        return None
+
+    monkeypatch.setattr(channel.media, "image_bytes", _bytes)
+    http = fake_http(bot_client, sent())
+    _post(client, _update(photo=[{"file_id": "b"}]))
+    assert turn == []
+    assert http.requests[0]["json"]["text"] == channel.IMAGE_FAILED_TEXT
+
+
+def test_a_failed_image_turn_logs_the_type_and_never_the_bytes(
+    client, owner, monkeypatch, fake_http, caplog
+):
+    """A transport or model error can quote the request it choked on, and that request carries the
+    picture."""
+
+    async def _bytes(msg):
+        return b"SECRETJPEGBYTES", "image/jpeg"
+
+    async def _boom(*a, **kw):
+        raise RuntimeError("failed sending SECRETJPEGBYTES")
+
+    monkeypatch.setattr(channel.media, "image_bytes", _bytes)
+    monkeypatch.setattr(channel, "run_turn", _boom)
+    http = fake_http(bot_client, sent())
+    with caplog.at_level("ERROR"):
+        _post(client, _update(photo=[{"file_id": "b"}]))
+    assert http.requests[0]["json"]["text"] == channel.IMAGE_FAILED_TEXT
+    assert "SECRETJPEGBYTES" not in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 def test_a_sticker_gets_the_general_refusal(client, known, fake_http):

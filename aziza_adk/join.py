@@ -47,7 +47,7 @@ def link_for(specialist_id: int, *, now: float, nonce: str) -> str:
     the honest failure.
     """
     signing = config.join_secrets()
-    if not signing or not config.JOIN_BASE_URL:
+    if not signing or not config.PUBLIC_BASE_URL:
         return ""
     token = tokens.mint(
         signing[0],
@@ -57,7 +57,7 @@ def link_for(specialist_id: int, *, now: float, nonce: str) -> str:
         now=now,
         nonce=nonce,
     )
-    return f"{config.JOIN_BASE_URL}/{JOIN}/{token}"
+    return f"{config.PUBLIC_BASE_URL}/{JOIN}/{token}"
 
 
 def opened(token: str, *, now: float) -> tokens.Verified | tokens.Rejected:

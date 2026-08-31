@@ -4,11 +4,14 @@ Two halves. The first needs no database at all and holds the refusals a speciali
 their own; the second drives a whole sale through the real schema.
 """
 
+import datetime as dt
+import inspect
 from decimal import Decimal
 
 import pytest
 
 from aziza_adk import queries, receipts, session, tools
+from aziza_adk.money import ZERO
 from tests.conftest import KNOWN_CLIENTS, service_named
 
 MANI = service_named("Manicura + pintura normal")  # nails, RD$300 F / RD$400 M
@@ -36,6 +39,13 @@ LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
         lambda c: tools.call_next(tool_context=c),
         lambda c: tools.who_is_waiting(tool_context=c),
         lambda c: tools.remove_from_queue("Laura", tool_context=c),
+        lambda c: tools.draft_expense(
+            "Suplidora", "1180", "2026-08-28", "materiales", tool_context=c
+        ),
+        lambda c: tools.amend_expense("total", "1180", tool_context=c),
+        lambda c: tools.register_expense("efectivo", tool_context=c),
+        lambda c: tools.void_expense("exp-1", tool_context=c),
+        lambda c: tools.month_606(tool_context=c),
     ],
 )
 def test_every_tool_refuses_a_session_with_no_specialist(ctx, call):
@@ -1696,3 +1706,240 @@ def test_asking_twice_does_not_put_one_woman_in_the_line_twice(working):
     answer = tools.who_is_waiting(tool_context=context)
     assert _waiting(answer, "Uñas") == ["Carmen"]
     assert _waiting(answer, "Depilación") == ["Carmen"]
+
+
+# --- [20] A supplier invoice, photographed -----------------------------------------------------
+
+
+@pytest.fixture
+def owner_with_photo(make_specialist, ctx):
+    """An owner with a photo in her session, the only place a handle comes from."""
+    context = ctx(make_specialist(roles=("owner",)))
+    session.remember_photo(context, "photo-handle-1")
+    return context
+
+
+def _draft(context, **over):
+    args = {
+        "supplier": "Suplidora Nacional",
+        "total_paid": "1180",
+        "invoice_date": "2026-08-28",
+        "category": "materiales",
+        "rnc": "131246813",
+        "ncf": "B0100000001",
+        "bienes": "1000",
+        "itbis": "180",
+    }
+    args.update(over)
+    return tools.draft_expense(tool_context=context, **args)
+
+
+def test_only_an_owner_reaches_an_expense_at_all(conn, sentinel, make_specialist, ctx):
+    """Registering what the salon spends is an owner's, and the body re-checks what the guard
+    already refused — docs/PROJECT_DEFINITION.md §15."""
+    context = ctx(make_specialist("nails"))
+    session.remember_photo(context, "photo-handle-1")
+    assert _draft(context)["error"] == "owner_only"
+    assert tools.register_expense("efectivo", tool_context=context)["error"] == "owner_only"
+
+
+def test_a_draft_with_no_photo_in_the_session_is_refused(conn, sentinel, make_specialist, ctx):
+    """There is no argument carrying a handle, so this cannot be called on a typed description of
+    an invoice — which is the whole reason the handle is written at the edge (§15)."""
+    context = ctx(make_specialist(roles=("owner",)))
+    assert _draft(context)["error"] == "need_photo"
+
+
+def test_the_confirmation_carries_the_supplier_the_comprobante_and_the_total(
+    conn, sentinel, owner_with_photo
+):
+    """Nothing in the code can tell the photograph was of an invoice, so those are what let her
+    tell — and every figure on the block came out of a render (docs/BRAND_VOICE.md §3)."""
+    answer = _draft(owner_with_photo)
+    assert "Suplidora Nacional" in answer["confirmation"]
+    assert "B0100000001" in answer["confirmation"]
+    assert "RD$1,180.00" in answer["confirmation"]
+
+
+def test_nothing_is_registered_until_she_confirms(conn, sentinel, owner_with_photo):
+    """The draft is a question waiting for an answer. It must not reach the register."""
+    _draft(owner_with_photo)
+    assert queries.expected_register(conn, tools._today())["cash"] == ZERO
+
+
+def test_registering_a_figure_she_was_never_shown_is_refused(conn, sentinel, make_specialist, ctx):
+    """The same gate as a ticket's: keyed on the row AND its total, so the witness cannot be
+    satisfied by a confirmation she never gave (§15)."""
+    context = ctx(make_specialist(roles=("owner",)))
+    session.remember_photo(context, "photo-handle-1")
+    _draft(context)
+    session.remember_expense_shown(context, "exp-somebody-else", Decimal("1180.00"))
+    assert tools.register_expense("efectivo", tool_context=context)["error"] == "not_shown"
+
+
+def test_a_draft_may_stop_adding_up_mid_correction_and_the_block_says_so(
+    conn, sentinel, owner_with_photo
+):
+    """Correcting one field at a time necessarily breaks the reconciliation for a moment: the
+    ITBIS has moved and the total she is about to correct has not. So the DRAFT is a scratchpad
+    and the block names what is wrong, rather than the amendment being refused (§15)."""
+    _draft(owner_with_photo)
+    answer = tools.amend_expense("itbis", "270", tool_context=owner_with_photo)
+    assert "error" not in answer
+    assert "no suman" in answer["confirmation"]
+
+
+def test_what_does_not_add_up_is_stopped_at_the_moment_of_writing(conn, sentinel, owner_with_photo):
+    """Where the gate actually is. The draft was allowed to hold the inconsistency; the salon's
+    record is not, so the check runs again off the row rather than being trusted from the draft."""
+    _draft(owner_with_photo)
+    tools.amend_expense("itbis", "270", tool_context=owner_with_photo)
+    assert tools.register_expense("efectivo", tool_context=owner_with_photo)["error"] == (
+        "total_mismatch"
+    )
+
+
+def test_correcting_both_halves_reconciles_and_re_arms_the_gate_on_the_new_total(
+    conn, sentinel, owner_with_photo
+):
+    """The whole correction, as she would actually do it: the figure, then the total. Each
+    amendment re-renders, and the witness the render records is what the write is gated on."""
+    _draft(owner_with_photo)
+    tools.amend_expense("itbis", "270", tool_context=owner_with_photo)
+    answer = tools.amend_expense("total", "1270", tool_context=owner_with_photo)
+    assert "RD$1,270.00" in answer["confirmation"]
+    registered = tools.register_expense("efectivo", tool_context=owner_with_photo)
+    assert "error" not in registered
+    assert "RD$1,270.00" in registered["registered"]
+
+
+def test_a_second_photograph_replaces_the_draft_rather_than_adding_one(
+    conn, sentinel, owner_with_photo
+):
+    """The ordinary case: she photographs the next invoice while the first is still on screen."""
+    _draft(owner_with_photo)
+    _draft(owner_with_photo, supplier="Otra Suplidora", ncf="B0100000002")
+    rows = queries.fetchall(
+        conn,
+        "SELECT supplier FROM expenses WHERE recorded_by = %(by)s AND status = 'draft'",
+        {"by": session.specialist_id(owner_with_photo)},
+    )
+    assert [r["supplier"] for r in rows] == ["Otra Suplidora"]
+
+
+def test_a_draft_she_left_an_hour_ago_is_refused_rather_than_registered(
+    conn, sentinel, owner_with_photo
+):
+    """ "Sí" long afterwards answers a question whose figures she has stopped looking at. The
+    freshness is in the query, so the draft is simply not found (§15)."""
+    _draft(owner_with_photo)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE expenses SET recorded_at = now() - interval '2 hours' "
+            " WHERE recorded_by = %(by)s AND status = 'draft'",
+            {"by": session.specialist_id(owner_with_photo)},
+        )
+    conn.commit()
+    assert tools.register_expense("efectivo", tool_context=owner_with_photo)["error"] == "no_draft"
+
+
+def test_the_same_invoice_twice_is_refused_by_the_table(conn, sentinel, owner_with_photo):
+    """It would come off the register twice. Refused by the insert rather than by a read-then-
+    write, because the constraint is what guarantees it (§15)."""
+    _draft(owner_with_photo)
+    assert "error" not in tools.register_expense("efectivo", tool_context=owner_with_photo)
+    _draft(owner_with_photo)
+    again = tools.register_expense("efectivo", tool_context=owner_with_photo)
+    assert again["error"] == "already_registered"
+
+
+def test_an_invoice_with_no_comprobante_is_registered_and_flagged_outside_the_606(
+    conn, sentinel, owner_with_photo
+):
+    """A colmado receipt. The money still left the drawer, so the register has to know (§15)."""
+    answer = _draft(owner_with_photo, rnc="", ncf="")
+    assert answer["on_606"] is False
+    registered = tools.register_expense("efectivo", tool_context=owner_with_photo)
+    assert registered["on_606"] is False
+    assert "606" in registered["registered"]
+
+
+def test_a_registered_expense_comes_off_what_the_register_should_hold(
+    conn, sentinel, owner_with_photo
+):
+    """The point of the whole change: money the salon spent out of the drawer is money the count
+    must not be measured against — docs/PROJECT_DEFINITION.md §7."""
+    _draft(owner_with_photo)
+    tools.register_expense("efectivo", tool_context=owner_with_photo)
+    assert queries.expected_register(conn, tools._today())["cash"] == Decimal("-1180.00")
+
+
+def test_an_expense_paid_on_credit_leaves_the_register_alone(conn, sentinel, owner_with_photo):
+    """Thirty-day terms move no money, so no drawer is short of it. Without this the first invoice
+    bought on terms would manufacture a shortfall nobody could explain (§15)."""
+    _draft(owner_with_photo)
+    registered = tools.register_expense("a crédito", tool_context=owner_with_photo)
+    assert "error" not in registered
+    assert queries.expected_register(conn, tools._today())["cash"] == ZERO
+
+
+def test_an_expense_paid_on_an_earlier_day_moves_that_days_expectation(
+    conn, sentinel, owner_with_photo
+):
+    """She does the books on Friday for a Monday invoice, and Monday's drawer is the short one."""
+    _draft(owner_with_photo)
+    monday = tools._today() - dt.timedelta(days=3)
+    assert "error" not in tools.register_expense(
+        "efectivo", monday.isoformat(), tool_context=owner_with_photo
+    )
+    assert queries.expected_register(conn, monday)["cash"] == Decimal("-1180.00")
+    assert queries.expected_register(conn, tools._today())["cash"] == ZERO
+
+
+def test_an_expense_cannot_be_registered_into_a_day_already_closed(
+    conn, sentinel, owner_with_photo, make_specialist
+):
+    """A closed day's expectation is a frozen snapshot precisely so nothing entered afterwards can
+    absorb into it — which is the one thing a reconciliation exists to catch (§7)."""
+    day = tools._today() - dt.timedelta(days=4)
+    queries.record_register_close(
+        conn,
+        day,
+        session.specialist_id(owner_with_photo),
+        {"cash": ZERO, "banreservas": ZERO, "bhd": ZERO},
+        {"cash": ZERO, "banreservas": ZERO, "bhd": ZERO},
+    )
+    _draft(owner_with_photo)
+    answer = tools.register_expense("efectivo", day.isoformat(), tool_context=owner_with_photo)
+    assert answer["error"] == "day_already_closed"
+
+
+def test_voiding_puts_the_money_back_on_the_register(conn, sentinel, owner_with_photo):
+    """The first misread that gets through is otherwise permanently wrong in the expectation."""
+    _draft(owner_with_photo)
+    tools.register_expense("efectivo", tool_context=owner_with_photo)
+    ref = queries.fetchone(
+        conn,
+        "SELECT expense_ref FROM expenses WHERE recorded_by = %(by)s AND status = 'registered'",
+        {"by": session.specialist_id(owner_with_photo)},
+    )["expense_ref"]
+    assert "error" not in tools.void_expense(ref, tool_context=owner_with_photo)
+    assert queries.expected_register(conn, tools._today())["cash"] == ZERO
+
+
+def test_the_amount_is_never_an_argument_to_the_tool_that_writes_the_row(
+    conn, sentinel, owner_with_photo
+):
+    """THE property this design rests on. `register_expense` takes how it was paid and the day,
+    and nothing else — every figure comes off the row she was shown, so there is no parameter in
+    which a misreading could arrive a second time (§15)."""
+    taken = set(inspect.signature(tools.register_expense).parameters)
+    assert taken == {"method", "paid_on", "tool_context"}
+
+
+def test_figures_that_do_not_add_up_never_reach_a_draft(conn, sentinel, owner_with_photo):
+    """Refused with both figures named, because neither can be trusted over the other."""
+    answer = _draft(owner_with_photo, total_paid="1000")
+    assert answer["error"] == "total_mismatch"
+    assert "RD$1,180.00" in answer["message"]
+    assert "RD$1,000.00" in answer["message"]

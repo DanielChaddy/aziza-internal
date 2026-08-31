@@ -36,12 +36,12 @@
 # Resolved on linux/amd64, python:3.12-slim.
 
 # --- agent-platform, pinned by commit (hand-added; see the header) ---
-agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-adk  # agent-adk-v0.1.0
+agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@5caf49650794de7c322f39e9b9c55831f16e5999#subdirectory=packages/agent-adk  # agent-adk-v0.2.0
 agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-evalkit  # agent-evalkit-v0.1.0
 agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-telemetry  # agent-telemetry-v0.1.0
 agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@8488d2b4af3753718c6698f944735d6edd422a13#subdirectory=packages/transcription  # agent-transcription-v0.2.0
 agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@d8528c1fc1bae22231298800e20c5c66cb7e330e#subdirectory=packages/webview  # agent-webview-v0.1.0
-channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@2ead714567b969b3212c32d3d0e214032a4bce37#subdirectory=packages/channel-telegram  # channel-telegram-v0.1.0
+channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@5caf49650794de7c322f39e9b9c55831f16e5999#subdirectory=packages/channel-telegram  # channel-telegram-v0.3.0
 conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@a2e58f0386a0830864885c9a3be7638a9d969c2c#subdirectory=packages/conversation-core  # conversation-core-v0.2.1
 
 # --- the resolved closure ---

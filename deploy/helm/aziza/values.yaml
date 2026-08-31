@@ -62,6 +62,8 @@ config:
   #   SALON_NAME                            -> Salón Aziza
   #   COMMISSION_PCT                        -> 40
   #   MODEL_TURN_TIMEOUT_SECONDS            -> 60
+  #   REPORT_TOKEN_TTL_SECONDS              -> 900
+  #   EXPENSE_DRAFT_TTL_MINUTES             -> 15
   #   TELEGRAM_*                            -> channel_telegram/settings.py defaults
   # TELEGRAM_ALLOWED_USER_IDS is omitted for a different reason than medical's equivalent: it is
   # not the containment here. aziza_adk/channel.py matches the sender against `specialists` before
@@ -69,6 +71,10 @@ config:
   # model call. The allowlist is a second, optional layer.
   # DATABASE_URL and ADK_SESSION_DB_URL are omitted because they are secrets, and arrive from the
   # Secret as explicit `env:` entries (see _helpers.tpl).
+  # SALON_RNC and REPORT_LINK_SECRET are absent, and until BOTH are set in the Secret the 606
+  # download is off — `month_606` refuses rather than minting a link to an unsigned or
+  # unattributable file. Neither can be defaulted here: one is the salon's own tax number and
+  # the other is a credential.
   # REQUIRE_DB is a test-gate variable and has no meaning in a running service.
 
 resources:

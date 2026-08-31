@@ -32,7 +32,7 @@ def configured(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", GOLDEN_TOKEN)
     monkeypatch.setattr(config, "JOIN_LINK_SECRET", "a-test-signing-secret-nobody-uses")
     monkeypatch.setattr(config, "JOIN_LINK_SECRET_PREVIOUS", "")
-    monkeypatch.setattr(config, "JOIN_BASE_URL", "https://example.test")
+    monkeypatch.setattr(config, "PUBLIC_BASE_URL", "https://example.test")
     monkeypatch.setattr(config, "MINI_APP_INIT_DATA_MAX_AGE_SECONDS", 86400)
     monkeypatch.setattr(tools, "now", lambda: _OPEN)
 

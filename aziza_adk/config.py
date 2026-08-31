@@ -51,6 +51,12 @@ TIMEZONE: str = os.getenv("TIMEZONE", "America/Santo_Domingo")
 # per-person split is a schema change when a real one appears, not a guess made today.
 COMMISSION_PCT: int = _int("COMMISSION_PCT", 40)
 
+# --- What the salon buys ----------------------------------------------------
+# How long a photographed invoice stays answerable. A photo taken and confirmed is one turn; a
+# "sí" an hour later answers a question whose figures she has stopped looking at, so the draft is
+# simply not found and she sends the photo again. See docs/PROJECT_DEFINITION.md §15.
+EXPENSE_DRAFT_TTL_MINUTES: int = _int("EXPENSE_DRAFT_TTL_MINUTES", 15)
+
 # --- Serving limits ---------------------------------------------------------
 # Hard cap on ONE turn. The Gemini SSE stream has no timeout of its own — google-genai sets
 # timeout=None — so a server that stops emitting chunks parks the turn forever and the
@@ -69,9 +75,10 @@ MODEL_TURN_TIMEOUT_SECONDS: int = _int("MODEL_TURN_TIMEOUT_SECONDS", 60)
 JOIN_LINK_SECRET: str = os.getenv("JOIN_LINK_SECRET", "")
 JOIN_LINK_SECRET_PREVIOUS: str = os.getenv("JOIN_LINK_SECRET_PREVIOUS", "")
 
-# Where the code points. Empty means the mini app mints nothing rather than minting a link to
-# nowhere. Derived from the Ingress host on the cluster — deploy/helm/aziza/templates/_helpers.tpl.
-JOIN_BASE_URL: str = os.getenv("JOIN_BASE_URL", "").rstrip("/")
+# Where every signed link this service mints points — the client's join page and the owner's
+# report download. Empty means nothing is minted rather than a link to nowhere. Derived from
+# the Ingress host on the cluster — deploy/helm/aziza/templates/_helpers.tpl.
+PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 # THREE numbers that are ONE design: rotate < ttl, and (ttl - rotate) + leeway is the grace a
 # client still has after the code she photographed has left the screen. tests/test_join.py holds
@@ -98,6 +105,28 @@ def join_secrets() -> list[str]:
     than the constants so a caller cannot pick up only one of the two.
     """
     return [s for s in (JOIN_LINK_SECRET, JOIN_LINK_SECRET_PREVIOUS) if s]
+
+
+# --- The report she downloads -----------------------------------------------
+# ITS OWN secret, never the join page's: sharing would mean rotating the code a client scans in
+# order to rotate the link an owner holds. Empty REFUSES every download, which is the safe
+# direction for a service nobody has configured yet.
+REPORT_LINK_SECRET: str = os.getenv("REPORT_LINK_SECRET", "")
+REPORT_LINK_SECRET_PREVIOUS: str = os.getenv("REPORT_LINK_SECRET_PREVIOUS", "")
+
+# Minutes, not the join code's few. One person taps this once, from the chat it was sent to, and
+# often on a laptop she has to walk to — but it carries the salon's whole month of purchases, so
+# it is the TTL that bounds a forwarded link rather than a spend counter (§15).
+REPORT_TOKEN_TTL_SECONDS: int = _int("REPORT_TOKEN_TTL_SECONDS", 900)
+
+# The salon's own RNC, which the 606 header names. Empty means no report is minted: a filing that
+# does not say who filed it is worse than none.
+SALON_RNC: str = os.getenv("SALON_RNC", "")
+
+
+def report_secrets() -> list[str]:
+    """The signing secrets, the live one first — as `join_secrets` is, and for the same reason."""
+    return [s for s in (REPORT_LINK_SECRET, REPORT_LINK_SECRET_PREVIOUS) if s]
 
 
 # --- End-of-day summary -----------------------------------------------------
