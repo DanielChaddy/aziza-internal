@@ -62,6 +62,44 @@ MODEL_TURN_TIMEOUT_SECONDS: int = _int("MODEL_TURN_TIMEOUT_SECONDS", 60)
 # Read by `channel_telegram.settings`, not here — one concept gets one variable name in every
 # runtime. Declared in .env.example, which is where the whole list lives.
 
+# --- The code she scans -----------------------------------------------------
+# Signs the join link the QR encodes. ITS OWN secret, never the webhook's and never the bot
+# token: sharing one would mean rotating the webhook to rotate the links. Empty REFUSES every
+# join, which is the safe direction for a service nobody has configured yet.
+JOIN_LINK_SECRET: str = os.getenv("JOIN_LINK_SECRET", "")
+JOIN_LINK_SECRET_PREVIOUS: str = os.getenv("JOIN_LINK_SECRET_PREVIOUS", "")
+
+# Where the code points. Empty means the mini app mints nothing rather than minting a link to
+# nowhere. Derived from the Ingress host on the cluster — deploy/helm/aziza/templates/_helpers.tpl.
+JOIN_BASE_URL: str = os.getenv("JOIN_BASE_URL", "").rstrip("/")
+
+# THREE numbers that are ONE design: rotate < ttl, and (ttl - rotate) + leeway is the grace a
+# client still has after the code she photographed has left the screen. tests/test_join.py holds
+# the relation, because two numbers that must agree are two numbers that drift.
+#
+# The ceiling is what a code is worth to somebody who photographs it, and the floor is a client
+# typing her name: the join form is one POST for a client the salon knows and two for one it does
+# not, and a token that dies mid-form sends her back to a code that has already rotated.
+JOIN_TOKEN_TTL_SECONDS: int = _int("JOIN_TOKEN_TTL_SECONDS", 300)
+JOIN_QR_ROTATE_SECONDS: int = _int("JOIN_QR_ROTATE_SECONDS", 120)
+JOIN_TOKEN_LEEWAY_SECONDS: int = _int("JOIN_TOKEN_LEEWAY_SECONDS", 60)
+
+# A DAY, not minutes. Telegram stamps `auth_date` when the mini app is LAUNCHED and never
+# refreshes it while it stays open, so a short window signs a specialist out mid-shift with no
+# signal but a stale code. To steal one an attacker is already inside her Telegram.
+MINI_APP_INIT_DATA_MAX_AGE_SECONDS: int = _int("MINI_APP_INIT_DATA_MAX_AGE_SECONDS", 86400)
+
+
+def join_secrets() -> list[str]:
+    """The signing secrets, the live one first.
+
+    `agent_webview.tokens.verify` accepts any of them and `mint` uses the first, which is what
+    makes a rotation a rolling restart rather than an outage. Read through this function rather
+    than the constants so a caller cannot pick up only one of the two.
+    """
+    return [s for s in (JOIN_LINK_SECRET, JOIN_LINK_SECRET_PREVIOUS) if s]
+
+
 # --- End-of-day summary -----------------------------------------------------
 # `simulate` logs what would be sent and WRITES NO CLAIM, so a dry run cannot mark a day as
 # already reported. Only `live` sends and records. See scripts/daily_summary.py.

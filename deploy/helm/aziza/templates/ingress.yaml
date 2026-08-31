@@ -11,7 +11,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
     # A voice note is fetched by the service from Telegram rather than posted to it, so the
-    # inbound body is JSON only.
+    # largest inbound body is the join form.
     nginx.ingress.kubernetes.io/proxy-body-size: "1m"
 spec:
   ingressClassName: {{ .Values.ingress.className }}
@@ -27,7 +27,12 @@ spec:
           # anything added later is unreachable from the internet by default rather than exposed
           # until someone remembers to deny it. /simulate is the route that must stay off it —
           # it runs a turn as any sender it is given (README § Run it).
-          {{- range list "/webhook" "/healthz" "/health" }}
+          #
+          # /j is the ONLY entry the internet reaches with no credential of any kind: a join
+          # token proves presence, not a person (docs/PROJECT_DEFINITION.md §13). /mini-app is
+          # gated on Telegram's signed initData, except its shell and script, which carry no
+          # salon data because they cannot be gated (§14).
+          {{- range list "/webhook" "/healthz" "/health" "/j" "/mini-app" }}
           - path: {{ . }}
             pathType: Prefix
             backend:

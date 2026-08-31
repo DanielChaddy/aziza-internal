@@ -41,6 +41,20 @@ def within_recording_window(when: dt.datetime) -> bool:
     return start <= when <= start.replace(hour=closes) + GRACE
 
 
+def is_open(when: dt.datetime) -> bool:
+    """Whether the salon is open at that moment. NO grace hour, unlike the recording window.
+
+    The grace is for a specialist finishing the client already in her chair; a client asking to
+    JOIN the line at 19:30 is asking to be started after closing (§13).
+    """
+    span = SCHEDULE.get(when.weekday())
+    if span is None:
+        return False
+    opens, closes = span
+    start = when.replace(hour=opens, minute=0, second=0, microsecond=0)
+    return start <= when < start.replace(hour=closes)
+
+
 def is_workday(day: dt.date) -> bool:
     """Whether the salon opens at all on `day`."""
     return day.weekday() in SCHEDULE

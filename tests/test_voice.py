@@ -28,6 +28,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "eval"))
 import voice_checks  # noqa: E402
 
 _SUFFIXES = ("_MSG", "_TEXT")
+#: What a CLIENT reads. A different suffix rather than a different module, because the sweep below
+#: matches on the name — so client copy is invisible to the specialist walk by construction, and
+#: `test_the_specialist_sweep_cannot_see_client_copy` is what proves that stays true.
+_CLIENT_SUFFIX = "_CLIENT_COPY"
 
 
 def _specialist_facing() -> list[tuple[str, str]]:
@@ -46,10 +50,31 @@ def _specialist_facing() -> list[tuple[str, str]]:
     return sorted(set(found))
 
 
+def _client_facing() -> list[tuple[str, str]]:
+    """Every `(where, text)` a CLIENT reads. Its own audience — docs/BRAND_VOICE.md §8."""
+    import aziza_adk
+
+    found: list[tuple[str, str]] = []
+    for info in pkgutil.walk_packages(aziza_adk.__path__, prefix="aziza_adk."):
+        module = importlib.import_module(info.name)
+        for name in dir(module):
+            if name.startswith("_") or not name.endswith(_CLIENT_SUFFIX):
+                continue
+            value = getattr(module, name)
+            if isinstance(value, str) and value.strip():
+                found.append((f"{info.name}.{name}", value))
+    return sorted(set(found))
+
+
 SPECIALIST_FACING = _specialist_facing()
+CLIENT_FACING = _client_facing()
 
 each_string = pytest.mark.parametrize(
     "where,text", SPECIALIST_FACING, ids=[where for where, _ in SPECIALIST_FACING]
+)
+
+each_client_string = pytest.mark.parametrize(
+    "where,text", CLIENT_FACING, ids=[where for where, _ in CLIENT_FACING]
 )
 
 
@@ -163,3 +188,32 @@ def test_a_ticket_that_says_more_than_the_work_reads_as_tu(walk_in):
         walk_in=walk_in,
     )
     assert voice_checks.usted_reasons(out) == []
+
+
+# --- what a client reads ----------------------------------------------------
+
+
+def test_there_are_client_strings_to_check():
+    # As above: a discovery walk that finds nothing passes every test below it in silence.
+    assert len(CLIENT_FACING) >= 10
+
+
+def test_the_specialist_sweep_cannot_see_client_copy():
+    """The split, asserted rather than assumed. If the suffixes ever overlap, client copy is
+    checked against the colleague register and a decision to address her differently would pass
+    this file without anybody noticing."""
+    assert not set(CLIENT_FACING) & set(SPECIALIST_FACING)
+    assert all(not where.endswith(_SUFFIXES) for where, _ in CLIENT_FACING)
+
+
+@each_client_string
+def test_every_client_string_speaks_to_her_as_tu(where, text):
+    """§8 keeps tú, and for a different reason than §1: a salon where the woman at the chair says
+    tú and the page says usted is two voices for one salon."""
+    assert voice_checks.usted_reasons(text) == [], where
+
+
+@each_client_string
+def test_no_client_string_asks_two_things_at_once(where, text):
+    """One step, one question. A form that asks two is one she answers half of."""
+    assert voice_checks.question_reasons(text) == [], where

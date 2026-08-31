@@ -23,6 +23,10 @@ Architecture at a glance:
 - **One line for the whole salon** (`aziza_adk/arrivals.py`, `db/schema.sql`): a client keeps the
   place her arrival gave her in every area she is waiting for, and is passed over only while
   somebody has her. Both rules are one filter over one order, and neither is stored.
+- **A code a client scans to put herself in it** (`aziza_adk/join.py`, `qr.py`, `queue_http.py`):
+  a short-lived signed link, rotated by the specialist's Telegram Mini App
+  (`aziza_adk/mini_app.py`). A client the salon knows reaches the line in one post; one it does
+  not is asked her name. The token proves she was standing there, never who she is.
 - **One argument that can move a commission** (`on_behalf_of`), gated on a column rather than on
   wording: refused for anyone the database does not give the `owner` role, required of an owner
   who holds no discipline, and recorded in `sales.recorded_by` alongside whose work it was.
@@ -62,6 +66,11 @@ docker compose up -d --wait db                # Postgres 16 on :5434, two databa
 ./.venv/bin/python scripts/seed_catalog.py --with-demo-specialists   # idempotent
 adk web                                       # pick `aziza_adk`, http://localhost:8000
 ```
+
+The client's page and the mini app ride on the same app. With `JOIN_LINK_SECRET` and
+`JOIN_BASE_URL` set in `.env`, `http://localhost:8080/mini-app` shows the code and
+`/j/<token>` is what it points at. Both refuse everything with no secret configured, which is the
+safe direction.
 
 One turn through the channel without Telegram:
 
@@ -112,6 +121,9 @@ service that is not configured yet.
     *"¿quién está esperando?"* → Ana is first for depilación, because somebody has Carmen.
 14. **Her place is kept.** Charge Carmen and ask again → she is ahead of Ana for depilación once
     more. Being served for one area never spends her place in the other.
+15. **She puts herself in it.** Open `/mini-app` from the bot's menu button → the code, counting
+    down. Scan it with a phone → the form. A number the salon knows goes straight in; a new one is
+    asked for a name. Wait for the code to rotate and scan the old one → *"Este código ya venció."*
 
 ## Testing
 
@@ -162,6 +174,7 @@ repository's `README.md` and it is the owner — this table says only what *this
 | `agent-telemetry` | the OTLP provider — one call in `channel.py`, and ADK's own spans stop being discarded |
 | `agent-evalkit` | the multi-run aggregate the eval reports |
 | `agent-transcription` | the model call that turns a voice note into the text a turn can act on |
+| `agent-webview` | the signed short-lived link the QR encodes, and the one HTML escape |
 
 `agent-telemetry` installs **nothing** with `OTEL_EXPORTER_OTLP_ENDPOINT` unset, which is how
 `adk web`, the eval and `pytest` all run.
