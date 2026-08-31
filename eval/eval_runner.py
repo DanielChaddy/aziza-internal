@@ -26,11 +26,12 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from agent_adk import build_graph
+import cases
+from agent_adk import build_graph, user_turn
 from agent_evalkit import aggregate
 from cases import Case, by_name
+from google.adk.events import Event, EventActions
 from google.adk.runners import InMemoryRunner
-from google.genai import types
 
 import voice_checks
 from aziza_adk import channel, config, guards, queries, session
@@ -119,7 +120,22 @@ async def _run_case(case: Case) -> tuple[bool, list[str], list[str]]:
     replies: list[str] = []
     try:
         for turn in case.turns:
-            message = types.Content(role="user", parts=[types.Part(text=turn)])
+            if isinstance(turn, cases.ImageTurn):
+                # The handle is written the way the channel writes it, at the edge and never as an
+                # argument — so the eval exercises the session production actually produces (§15).
+                await runner.session_service.append_event(
+                    created,
+                    Event(
+                        author="system",
+                        invocation_id="photo",
+                        actions=EventActions(
+                            state_delta={session.PHOTO_KEY: {"file_id": turn.image}}
+                        ),
+                    ),
+                )
+                message = user_turn(turn.caption, image=_fixture(turn.image), mime="image/jpeg")
+            else:
+                message = user_turn(turn)
             spoken: list[str] = []
             async for event in runner.run_async(
                 user_id=case.name, session_id=created.id, new_message=message
@@ -220,3 +236,11 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+_FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
+
+
+def _fixture(name: str) -> bytes:
+    """One photograph's bytes. A missing fixture is a broken case, not a silent text turn."""
+    return (_FIXTURES / name).read_bytes()
