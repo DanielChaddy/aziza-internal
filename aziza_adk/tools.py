@@ -56,7 +56,16 @@ AFTER_HOURS_TOOL_NAMES = frozenset(
 
 #: What only an owner may do at all, at any hour. `guards.before_tool_guard` refuses these for
 #: anyone else; the bodies re-check, as they do for `on_behalf_of`.
-OWNER_TOOL_NAMES = frozenset({"close_register", "record_loan", "salon_day", "client_history"})
+OWNER_TOOL_NAMES = frozenset(
+    {
+        "close_register",
+        "record_loan",
+        "salon_day",
+        "client_history",
+        "salon_clients",
+        "lapsed_clients",
+    }
+)
 
 #: Every tool needs a registered specialist behind it. `guards.before_tool_guard` refuses each of
 #: them without one; the bodies re-check.
@@ -78,6 +87,8 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "record_loan",
         "salon_day",
         "client_history",
+        "salon_clients",
+        "lapsed_clients",
     }
 )
 
@@ -113,6 +124,23 @@ MAX_QUANTITY = 20
 #: How many visits a client's history lists. An owner between clients does not page, and the
 #: render says how many older ones there are rather than truncating in silence.
 MAX_HISTORY_VISITS = 6
+
+#: How many names each ranking lists. The knob if an owner says the report is long: three makes
+#: it fourteen lines.
+TOP_N = 5
+#: The window the salon-wide report reads, as (low, default, high). Clamped rather than refused:
+#: it is a window, not money, and a bad value from the model should still produce a sane report —
+#: the window it actually read goes on the message.
+REPORT_DAYS = (7, 90, 365)
+#: How long without a visit counts as having stopped. Roughly two missed acrylic fills: thirty
+#: would flag half the book every week and the list would stop being read, ninety describes
+#: somebody who has already gone rather than somebody who is going.
+QUIET_DAYS = (14, 60, 365)
+#: Two charged visits ever is what makes "used to come" mean anything. One is a walk-in who never
+#: became a client, and reporting her as having stopped is noise.
+LAPSED_MIN_VISITS = 2
+#: Ordered most-recently-lapsed first, so the cap keeps the actionable half rather than a wall.
+LAPSED_TOP = 10
 
 _TZ = ZoneInfo(config.TIMEZONE)
 
@@ -1351,6 +1379,92 @@ def client_history(client: str, client_phone: str = "", tool_context: ToolContex
             balance=balance,
             first_visit=totals["first_visit"],
             phone=clients.formatted(who.phone),
+        )
+    }
+
+
+def _clamped(value: Any, bounds: tuple[int, int, int]) -> int:
+    """`value` pulled into `(low, default, high)`. A window is not money: a nonsense one from the
+    model should still answer, and the message says which window it read."""
+    low, default, high = bounds
+    try:
+        return max(low, min(high, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def salon_clients(days: int = 90, tool_context: ToolContext = None) -> dict:
+    """Who comes most, who spends most and what the salon does most, over a stretch of days.
+    Owners only.
+
+    "Spends" is what she was BILLED, not what she handed over: a client who left owing was still
+    worth the work, and the commission was taken on it (§7).
+
+    Args:
+        days: How far back to look. Defaults to the last 90 days.
+
+    Returns:
+        {"summary": str} — send it as it came — or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    window = _clamped(days, REPORT_DAYS)
+    end = _today()
+    start = end - dt.timedelta(days=window - 1)
+    try:
+        with queries.connect() as conn:
+            activity = queries.client_activity(conn, start, end)
+            sold = queries.top_services(conn, start, end, TOP_N)
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+    by_visits = sorted(activity, key=lambda r: (-r["visits"], r["name"]))[:TOP_N]
+    by_spend = sorted(activity, key=lambda r: (-r["spent"], r["name"]))[:TOP_N]
+    return {
+        "summary": receipts.render_salon_clients(
+            start,
+            end,
+            most_visits=[(r["name"], r["visits"]) for r in by_visits],
+            most_spent=[(r["name"], r["spent"]) for r in by_spend],
+            most_sold=[(r["name"], r["times"], r["billed"]) for r in sold],
+        )
+    }
+
+
+def lapsed_clients(quiet_days: int = 60, tool_context: ToolContext = None) -> dict:
+    """Clients who used to come and no longer do, and balances nobody has moved in as long.
+    Owners only.
+
+    Args:
+        quiet_days: How long without a visit counts as having stopped. Defaults to 60.
+
+    Returns:
+        {"summary": str} — send it as it came — or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    quiet = _clamped(quiet_days, QUIET_DAYS)
+    cutoff = _today() - dt.timedelta(days=quiet)
+    try:
+        with queries.connect() as conn:
+            gone = queries.lapsed_clients(conn, cutoff, LAPSED_MIN_VISITS, LAPSED_TOP)
+            owing = queries.stale_balances(conn, cutoff, LAPSED_TOP)
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+    return {
+        "summary": receipts.render_lapsed_clients(
+            quiet,
+            lapsed=[
+                (r["name"], clients.formatted(r["phone"] or ""), r["last_visit"], r["visits"])
+                for r in gone
+            ],
+            owing=[
+                (r["name"], clients.formatted(r["phone"] or ""), r["balance"], r["last_move"])
+                for r in owing
+            ],
         )
     }
 

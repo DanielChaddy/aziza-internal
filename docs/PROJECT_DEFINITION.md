@@ -119,6 +119,27 @@ Every child table is reached through its own correlated subquery rather than a j
 and `sale_payments` each fan out independently, so one query joining both multiplies a sale's
 total by the number of payments it took — and the figure that comes out still looks like money.
 
+**Two reports read the salon rather than one client.** `salon_clients` answers who comes most,
+who spends most and what the salon does most over a window of days; `lapsed_clients` answers who
+used to come and no longer does, and whose balance nobody has moved in as long.
+
+- **Spending is what she was BILLED, not what she handed over.** A client who left owing was
+  still worth the work, and the commission was taken on it (§7).
+- **Coming most and spending most are two readings of the same rows**, taken from one query
+  rather than two ordered ones, so the two rankings cannot disagree about a client.
+- **What the salon does most is counted by quantity, not by ticket** — two pedicures on one
+  ticket were sold twice — and grouped on the service's id under its CURRENT name. §4 freezes a
+  name to protect a quote already given, and a ranking is not one; grouping on the snapshot would
+  split a service in two the day somebody renames it.
+- **Lapsed means at least two charged visits, and none since the cutoff.** One visit is a walk-in
+  who never became a client, and reporting her as having stopped is the noise that teaches people
+  to skip the list. The default quiet is 60 days — roughly two missed fills: thirty would flag
+  half the book every week, and ninety describes somebody who has already gone.
+- **The old balances are a SECOND list, not a filter on the first.** They are two different phone
+  calls, one to book her and one to collect, and a regular who owes belongs only in the second.
+- **A window is clamped rather than refused**, because it is a window and not money — and the
+  window it actually read is on the message, so a default the owner did not choose is visible.
+
 ## §4 · The ticket
 
 One open ticket per specialist, enforced by a partial unique index rather than by a check in the

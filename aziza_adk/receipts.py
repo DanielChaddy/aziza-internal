@@ -187,6 +187,67 @@ def _visits_said(n: int) -> str:
     return "1 visita" if n == 1 else f"{n} visitas"
 
 
+#: Said when a window holds nothing, rather than three empty headings under three of them.
+NO_SALES_TEXT = "No hay ventas registradas en ese período."
+#: The two halves of the retention report, each answered on its own — one is a phone call to book
+#: her and the other is a phone call to collect, and an empty one is an answer.
+NO_LAPSED_TEXT = "Ninguna clienta lleva tanto tiempo sin volver."
+NO_OLD_BALANCE_TEXT = "Nadie tiene saldo viejo pendiente."
+
+
+def render_salon_clients(
+    start: dt.date,
+    end: dt.date,
+    *,
+    most_visits: Sequence[tuple[str, int]],
+    most_spent: Sequence[tuple[str, Decimal]],
+    most_sold: Sequence[tuple[str, int, Decimal]],
+) -> str:
+    """Who comes, who spends and what they buy, over a stretch of days.
+
+    The window it actually read is on the message, because the days are a default the owner did
+    not choose. The three blocks are labelled apart so a visit count can never be read as pesos.
+    """
+    rows = [f"Del {spanish_day(start)} al {spanish_day(end)}."]
+    if not (most_visits or most_spent or most_sold):
+        return rows[0] + "\n\n" + NO_SALES_TEXT
+    rows += ["", "Las que más vienen:"]
+    rows += [f"• {name} — {_visits_said(n)}" for name, n in most_visits]
+    rows += ["", "Las que más gastan:"]
+    rows += [f"• {name} — {rd(amount)}" for name, amount in most_spent]
+    rows += ["", "Lo que más se hace:"]
+    rows += [f"• {name} — {times} veces, {rd(billed)}" for name, times, billed in most_sold]
+    return "\n".join(rows)
+
+
+def render_lapsed_clients(
+    quiet_days: int,
+    *,
+    lapsed: Sequence[tuple[str, str, dt.date, int]],
+    owing: Sequence[tuple[str, str, Decimal, dt.date]],
+) -> str:
+    """Who stopped coming, and whose balance nobody has moved.
+
+    TWO lists rather than one, because they are two different phone calls: one to book her and
+    one to collect. A regular who owes belongs only in the second.
+
+    The number is here for the same reason the report is — docs/BRAND_VOICE.md §7.
+    """
+    rows = [f"Clientas que no vuelven desde hace más de {quiet_days} días:"]
+    rows += [
+        f"• {name} — última vez el {spanish_day(day)}, {_visits_said(n)}"
+        + (f", tel {phone}" if phone else "")
+        for name, phone, day, n in lapsed
+    ] or [NO_LAPSED_TEXT]
+    rows += ["", "Con saldo viejo sin mover:"]
+    rows += [
+        f"• {name} — {rd(balance)}, desde el {spanish_day(day)}"
+        + (f", tel {phone}" if phone else "")
+        for name, phone, balance, day in owing
+    ] or [NO_OLD_BALANCE_TEXT]
+    return "\n".join(rows)
+
+
 def render_receipt(
     client_name: str,
     lines: Sequence[Line],
