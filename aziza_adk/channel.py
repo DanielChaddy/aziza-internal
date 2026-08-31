@@ -22,10 +22,11 @@ import logging
 
 import agent_telemetry as telemetry
 import agent_transcription as transcription
+from agent_adk import user_turn
+from channel_telegram import media
 from channel_telegram.handler import TurnHandler
 from channel_telegram.webhook import create_app
 from google.adk.events import Event, EventActions
-from google.genai import types
 
 from aziza_adk import config, mini_app, queries, queue_http, runtime, session, tools
 
@@ -45,9 +46,16 @@ QUOTA_EXHAUSTED_TEXT = (
     "Llegué al límite de uso por hoy y no puedo registrar nada más. Avísale a la administración."
 )
 NOT_REGISTERED_TEXT = tools.NOT_REGISTERED_MSG
+# Photos are the administration's path, so a specialist who is not an owner is told what the
+# channel is for rather than that photos cannot be read — which stopped being true.
 MEDIA_REFUSED_TEXT = (
-    "No puedo leer fotos. Escríbeme o mándame una nota de voz con lo que le hiciste a la clienta."
+    "Las fotos de facturas las registra la administración. Escríbeme o mándame una nota de voz "
+    "con lo que le hiciste a la clienta."
 )
+# The photo arrived and its bytes did not. Separate from the line above for the reason a voice
+# note that yielded no words is separate: telling her photos are somebody else's invites the
+# wrong retry when the fetch is what failed.
+IMAGE_FAILED_TEXT = "Recibí la foto pero no pude abrirla. ¿Me la mandas otra vez?"
 UNSUPPORTED_TEXT = "Solo puedo leer mensajes de texto y notas de voz. ¿Me lo escribes?"
 # A voice note that arrived but yielded no words. Separate from UNSUPPORTED_TEXT because telling
 # someone who just spoke that speech is unread is false, and invites the same failed retry.
@@ -129,11 +137,33 @@ def _is_quota_exhausted(exc: BaseException) -> bool:
     return False
 
 
-async def run_turn(user_id: str, who: dict, text: str) -> str:
-    """Drive one specialist's turn through the production Runner."""
+async def run_turn(
+    user_id: str,
+    who: dict,
+    text: str,
+    *,
+    image: bytes | None = None,
+    mime: str = "",
+    photo_file_id: str = "",
+) -> str:
+    """Drive one specialist's turn through the production Runner.
+
+    `photo_file_id` is written to session state BEFORE the Runner is invoked, which is the whole
+    of why a tool can be sure it is real: there is no argument carrying a handle, so a model
+    cannot invent one and no tool can be called on a description of an invoice (§15).
+    """
     runner = runtime.get_runner()
-    await _session_for(runner, user_id, who)
-    message = types.Content(role="user", parts=[types.Part(text=text)])
+    found = await _session_for(runner, user_id, who)
+    if photo_file_id:
+        await runner.session_service.append_event(
+            found,
+            Event(
+                author="system",
+                invocation_id="photo",
+                actions=EventActions(state_delta={session.PHOTO_KEY: {"file_id": photo_file_id}}),
+            ),
+        )
+    message = user_turn(text, image=image, mime=mime)
     chunks: list[str] = []
     try:
         async for event in runner.run_async(
@@ -163,7 +193,40 @@ class SalonHandler(TurnHandler):
         return await run_turn(msg.sender, who, msg.text or "")
 
     async def on_media(self, msg) -> str | None:
-        return MEDIA_REFUSED_TEXT
+        """A photographed supplier invoice, which is an owner's path and nobody else's.
+
+        Refused HERE rather than by the guard, and before any fetch or model call: the input
+        screen reads text parts only, so what is written inside a picture is unscreened by code.
+        Admitting only owners is what keeps that surface two people wide (§15).
+        """
+        # TODO: `agent_adk.latest_user_text` reads text parts, so text inside an image reaches the
+        # model unscreened. Contained structurally rather than by a guard — see §15.
+        who = await specialist_for(msg.sender)
+        if who is None:
+            logger.info("turn refused: sender %s is not a registered specialist", msg.sender)
+            return NOT_REGISTERED_TEXT
+        if session.OWNER not in (who.get("roles") or ()):
+            logger.info("photo refused: sender %s is not an owner", msg.sender)
+            return MEDIA_REFUSED_TEXT
+
+        fetched = await media.image_bytes(msg)
+        if fetched is None:
+            return IMAGE_FAILED_TEXT
+        data, mime = fetched
+        try:
+            return await run_turn(
+                msg.sender,
+                who,
+                msg.caption or "",
+                image=data,
+                mime=mime,
+                photo_file_id=msg.media_id or "",
+            )
+        except Exception as exc:  # noqa: BLE001 - the type only, never the exception
+            # A transport or model error can quote the request it choked on, and that request
+            # carries the picture.
+            logger.error("image turn failed: %s", type(exc).__name__)
+            return IMAGE_FAILED_TEXT
 
     async def on_unsupported(self, msg) -> str | None:
         # The channel routes a voice note here only once transcription has produced nothing, and
