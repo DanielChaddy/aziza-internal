@@ -126,6 +126,30 @@ def test_an_empty_bot_token_refuses_rather_than_passing():
     assert result.reason == init_data.REASON_NO_TOKEN
 
 
+def test_a_launch_carrying_the_signature_field_verifies():
+    """THE regression. Telegram signs "all received fields, sorted alphabetically" minus `hash` —
+    and `signature`, which belongs to the separate third-party method, is a received field like any
+    other. Excluding it too rejected every real launch, with nothing to see but `bad_signature`."""
+    fields = {
+        "auth_date": str(GOLDEN_AUTH_DATE),
+        "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
+        "signature": "3PW1cVEbTFRvzXMFTZ3nMWyMV0MzWZeBhhcSDWqL0BM",
+        "user": json.dumps({"id": 700000001}, separators=(",", ":")),
+    }
+    checked = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret = hmac.new(b"WebAppData", GOLDEN_TOKEN.encode(), hashlib.sha256).digest()
+    signed = hmac.new(secret, checked.encode(), hashlib.sha256).hexdigest()
+    result = _verify(urlencode({**fields, "hash": signed}))
+    assert isinstance(result, init_data.Verified), getattr(result, "reason", result)
+    assert result.telegram_user_id == GOLDEN_USER_ID
+
+
+def test_only_the_hash_is_left_out_of_what_is_checked():
+    """Stated as a property rather than left to the chain above: any second exclusion silently
+    un-signs a field, and the symptom is indistinguishable from a wrong bot token."""
+    assert init_data._NOT_SIGNED == ("hash",)
+
+
 # --- [3] Malformed input is a reason, never an exception --------------------------------------
 
 
