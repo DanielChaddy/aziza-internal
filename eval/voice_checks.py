@@ -34,6 +34,10 @@ _POSSESSIVE_NOUNS = (
     "días",
     "total",
     "totales",
+    "fila",
+    "filas",
+    "área",
+    "áreas",
 )
 
 #: Figures this assistant must never write itself — §3. A bare number beside a currency mark that

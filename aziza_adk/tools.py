@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -24,7 +25,9 @@ from conversation_core import fold
 from google.adk.tools import ToolContext
 
 from aziza_adk import (
+    arrivals,
     catalog,
+    catalog_data,
     clients,
     config,
     money,
@@ -90,6 +93,10 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "client_history",
         "salon_clients",
         "lapsed_clients",
+        "add_to_queue",
+        "call_next",
+        "who_is_waiting",
+        "remove_from_queue",
     }
 )
 
@@ -201,6 +208,41 @@ PHONE_TAKEN_MSG = "Ese teléfono ya es de otra clienta con ese mismo nombre. Rev
 NO_CREDIT_WALK_IN_MSG = (
     "A esa clienta no le puedo fiar: no tengo su teléfono para buscarla en la próxima visita."
 )
+
+QUEUE_EMPTY_MSG = "No hay nadie esperando por tu área ahora mismo."
+WHICH_AREA_MSG = "¿De cuál de tus áreas la llamo?"
+NOT_YOUR_AREA_MSG = "Esa área no es tuya, así que no puedo llamarte a nadie de esa fila."
+NO_AREA_MSG = "No tienes un área asignada, así que no hay fila de dónde llamarte a nadie."
+UNKNOWN_AREA_MSG = "No conozco esa área. El salón tiene uñas y depilación."
+NEED_AREA_MSG = "¿Para qué área la pongo, uñas o depilación?"
+ALREADY_SERVING_MSG = (
+    "Todavía tienes a {client} contigo. Cóbrale o sácala de la fila, y llamo a la siguiente."
+)
+NOT_IN_LINE_MSG = "Esa clienta no está en la fila hoy."
+
+#: What a specialist calls each of the salon's areas, folded. The values are `disciplines.code`.
+#: A folded table rather than a resolve against the table itself: `disciplines` has no aliases
+#: column, and "cera" is what she actually says. Bare "una" is absent — it is the article.
+_AREAS = {
+    "unas": "nails",
+    "nails": "nails",
+    "manicure": "nails",
+    "manicura": "nails",
+    "pedicure": "nails",
+    "pedicura": "nails",
+    "depilacion": "wax",
+    "cera": "wax",
+    "wax": "wax",
+}
+
+#: The Spanish name of each area, read from the dataset the seeder writes `disciplines` from, so
+#: the options a specialist is offered cannot drift from the rows the line is grouped by.
+_AREA_NAMES = {row["code"]: row["name"] for row in catalog_data.DISCIPLINES}
+
+#: How she strings two areas together in one breath. "y" and "e" are words rather than
+#: punctuation, so they match on a boundary or "depilacion" loses its middle.
+_AREA_SEPARATORS = re.compile(r"\s*(?:,|/|\+|\by\b|\be\b)\s*")
+
 
 #: What a specialist calls each way of paying. The values are the salon's three accounts, and
 #: nothing outside them can be recorded — a payment nobody can attribute to an account is one the
@@ -1602,3 +1644,205 @@ def summary_text(full_name: str, day: dt.date, totals: dict, *, reader_is_her: b
         payday=totals.get("payday"),
         reader_is_her=reader_is_her,
     )
+
+
+# --- the line ---------------------------------------------------------------
+
+
+def _area_for(said: str, person: staff.Person) -> tuple[str, dict | None]:
+    """Which one of her areas she means, or `(_, error)` for the caller to return.
+
+    Never a guess when she holds two and named none: a client taken out of the wrong line is a
+    woman sent to the wrong chair. Checked against HER areas and not the sender's, exactly as the
+    discipline on a service is (§3).
+    """
+    held = tuple(person.disciplines)
+    if not held:
+        return "", {"error": "no_area", "message": NO_AREA_MSG}
+    wanted = fold(said or "").strip()
+    if not wanted:
+        if len(held) == 1:
+            return held[0], None
+        return "", {
+            "error": "which_area",
+            "message": WHICH_AREA_MSG,
+            "options": [_AREA_NAMES.get(code, code) for code in held],
+        }
+    code = _AREAS.get(wanted)
+    if code is None:
+        return "", {"error": "unknown_area", "message": UNKNOWN_AREA_MSG}
+    if code not in held:
+        return "", {"error": "not_your_area", "message": NOT_YOUR_AREA_MSG}
+    return code, None
+
+
+def _areas_said(said: str) -> tuple[list[str], dict | None]:
+    """Every area named in one breath, in the order she said them and without repeats."""
+    parts = [part for part in _AREA_SEPARATORS.split(fold(said or "").strip()) if part]
+    if not parts:
+        return [], {"error": "no_area_named", "message": NEED_AREA_MSG}
+    codes: list[str] = []
+    for part in parts:
+        code = _AREAS.get(part)
+        if code is None:
+            return [], {"error": "unknown_area", "message": UNKNOWN_AREA_MSG}
+        if code not in codes:
+            codes.append(code)
+    return codes, None
+
+
+def _client_in_line(conn, name: str, client_phone: str) -> tuple[int | None, dict | None]:
+    """The client this name and number mean, registering her if the salon does not know her.
+
+    No number is DEMANDED here, unlike on a ticket: nothing in the line carries money, so there
+    is no balance for the pair to protect and she is standing there to be called by name (§3).
+    """
+    key, refused = _phone(client_phone)
+    if refused is not None:
+        return None, refused
+    picked = clients.pick(clients.roster(queries.clients_named(conn, name)), key)
+    if picked.candidates:
+        return None, {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+    if picked.match is not None:
+        return picked.match.client_id, None
+    return queries.create_client(conn, name, key or None)["id"], None
+
+
+def add_to_queue(
+    client: str,
+    areas: str = "",
+    client_phone: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Put a client in the salon's line, for one area or for two.
+
+    For a client who cannot put herself in it. The line is one line for the whole salon, in the
+    order people arrived.
+
+    Args:
+        client: Her name, as the specialist said it.
+        areas: Which areas she came for — "uñas", "depilación", or both in one breath.
+        client_phone: Her number, ONLY when a previous call asked for it. Empty otherwise.
+
+    Returns:
+        {"queued": true, "client": str, "areas": [str]} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    codes, refused = _areas_said(areas)
+    if refused is not None:
+        return refused
+    with queries.connect() as conn:
+        client_id, refused = _client_in_line(conn, client, client_phone)
+        if refused is not None:
+            return refused
+        queries.record_arrival(conn, client_id, _today(), codes)
+    return {
+        "queued": True,
+        "client": client.strip(),
+        "areas": [_AREA_NAMES.get(code, code) for code in codes],
+    }
+
+
+def call_next(
+    area: str = "",
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Call the next client waiting in the salon's line for this specialist's area.
+
+    A client waiting for two areas keeps her place in both and is passed over only while somebody
+    else has her. This does NOT open a ticket — the work is recorded afterwards, as it always is.
+
+    Args:
+        area: Which of her areas, in her own words. Leave empty when she holds only one.
+        on_behalf_of: ONLY for an owner, and then it is REQUIRED: the specialist this is for, in
+            her own words. An ordinary specialist leaves it empty.
+
+    Returns:
+        {"called": true, "client": str, "still_waiting": int}, {"called": false, "message": str}
+        when nobody is free, or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    with queries.connect() as conn:
+        person, refused = _acting(conn, tool_context, on_behalf_of)
+        if refused is not None:
+            return refused
+        code, refused = _area_for(area, person)
+        if refused is not None:
+            return refused
+        # Refused rather than closed for her: nothing puts a want back, so a model calling this
+        # unprompted would otherwise mark a woman mid-service as finished.
+        if (busy := queries.serving_now(conn, person.specialist_id)) is not None:
+            return {
+                "error": "already_serving",
+                "message": ALREADY_SERVING_MSG.format(client=busy["client_name"]),
+            }
+        # Walked rather than picked once: a False means another specialist won the race on the
+        # index between the read and the write, and the next client is the answer.
+        for one in arrivals.waiting_in(arrivals.line(queries.line_today(conn, _today())), code):
+            if queries.take_next(conn, one.arrival_id, code, person.specialist_id):
+                still = arrivals.waiting_in(arrivals.line(queries.line_today(conn, _today())), code)
+                return {"called": True, "client": one.client_name, "still_waiting": len(still)}
+        return {"called": False, "message": QUEUE_EMPTY_MSG}
+
+
+def who_is_waiting(tool_context: ToolContext = None) -> dict:
+    """Who is in the salon's line right now, in the order they will be called.
+
+    Every area rather than only hers: she is often the one who has to tell a client how long it
+    will be.
+
+    Returns:
+        {"lines": [{"area": str, "waiting": [str]}], "being_attended": [str]}, or
+        {"lines": [], "message": str} when the salon is empty.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    with queries.connect() as conn:
+        found = arrivals.line(queries.line_today(conn, _today()))
+    if not found:
+        return {"lines": [], "message": QUEUE_EMPTY_MSG}
+    return {
+        # Names only. Her number tells two clients apart and is not a thing a specialist ever
+        # reads (docs/BRAND_VOICE.md §7).
+        "lines": [
+            {"area": name, "waiting": [one.client_name for one in arrivals.waiting_in(found, code)]}
+            for code, name in _AREA_NAMES.items()
+        ],
+        "being_attended": [one.client_name for one in found if one.serving is not None],
+    }
+
+
+def remove_from_queue(
+    client: str,
+    client_phone: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Take a client out of the salon's line: she left, or she was not there when she was called.
+
+    Out of EVERY line she was in, because a client who is not here is not here for the other one
+    either. Anyone may do it — whoever noticed is who is standing there.
+
+    Args:
+        client: Her name, as the specialist said it.
+        client_phone: Her number, ONLY when a previous call asked for it. Empty otherwise.
+
+    Returns:
+        {"removed": true, "client": str} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    with queries.connect() as conn:
+        key, refused = _phone(client_phone)
+        if refused is not None:
+            return refused
+        picked = clients.pick(clients.roster(queries.clients_named(conn, client)), key)
+        if picked.candidates:
+            return {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+        if picked.match is None:
+            return {"error": "not_in_line", "message": NOT_IN_LINE_MSG}
+        if not queries.leave_line(conn, picked.match.client_id, _today()):
+            return {"error": "not_in_line", "message": NOT_IN_LINE_MSG}
+    return {"removed": True, "client": picked.match.name}

@@ -10,6 +10,7 @@ recompute the sale's total in a single commit, and what keeps a half-written tic
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
 
@@ -721,6 +722,18 @@ def close_sale(
             "WHERE id = %(sale)s AND status = 'open'",
             {"sale": sale_id, "day": business_date, "status": status},
         )
+        # The want ends when the ticket does, which is the moment the work actually ended: she
+        # charges BETWEEN clients (§1). Matched on the CLIENT as well as on her, because by then
+        # she has usually already called the next one — and closing this ticket must not take
+        # THAT woman out of the line (§12).
+        cur.execute(
+            "UPDATE arrival_wants w SET status = 'done' "
+            "FROM arrivals a, sales s "
+            "WHERE a.id = w.arrival_id AND s.id = %(sale)s "
+            "  AND w.served_by = s.specialist_id AND w.status = 'serving' "
+            "  AND a.client_id = s.client_id",
+            {"sale": sale_id},
+        )
     conn.commit()
 
 
@@ -1130,3 +1143,162 @@ def claim_summary(
             },
         )
         return cur.rowcount == 1
+
+
+# --- the line ---------------------------------------------------------------
+
+
+def clients_on_phone(conn: psycopg.Connection, phone: str) -> list[dict]:
+    """Every client that number reaches, oldest first. `clients_named` the other way round.
+
+    A LIST for the same reason that one is, and the reason is the PAIR: a number alone is a mother
+    and her daughter, so this answers who is ON this number and never who this is. The name is the
+    half a person still has to supply (§3).
+
+    No `phone IS NOT NULL` clause and none is needed — equality never matches a NULL, so a client
+    who gave no number is unreachable here by construction rather than by a filter.
+    """
+    return fetchall(
+        conn,
+        "SELECT id, client_ref, name, phone FROM clients WHERE phone = %(phone)s ORDER BY id",
+        {"phone": phone},
+    )
+
+
+def record_arrival(
+    conn: psycopg.Connection,
+    client_id: int,
+    business_date: dt.date,
+    disciplines: Sequence[str],
+) -> dict:
+    """Put a client in the salon's line, in one line per discipline she named.
+
+    Reuses the arrival she is STILL STANDING IN rather than writing a second, so asking twice adds
+    what is new and does not put one woman in the line twice. A client who was served this morning
+    and comes back at four has no live arrival, so she gets a new one with a new arrival time —
+    which is the only reason `arrivals` carries no unique on (client_id, business_date) (§12).
+
+    A want already being served is left alone: reopening it would yank her out of a chair.
+    """
+    with conn.cursor() as cur:
+        # TODO: read-then-write. Two joins for one client in the same instant both find no live
+        # arrival and both insert, which no constraint here refuses — see the comment on
+        # `arrivals` for why (client_id, business_date) is not unique.
+        cur.execute(
+            "SELECT a.id, a.arrival_ref, a.arrived_at FROM arrivals a "
+            "WHERE a.client_id = %(cid)s AND a.business_date = %(day)s "
+            "  AND EXISTS (SELECT 1 FROM arrival_wants w WHERE w.arrival_id = a.id "
+            "               AND w.status IN ('waiting', 'serving')) "
+            "ORDER BY a.arrived_at LIMIT 1",
+            {"cid": client_id, "day": business_date},
+        )
+        arrival = cur.fetchone()
+        if arrival is None:
+            cur.execute(
+                "INSERT INTO arrivals (arrival_ref, client_id, business_date) "
+                "VALUES (gen_random_uuid()::text, %(cid)s, %(day)s) "
+                "RETURNING id, arrival_ref, arrived_at",
+                {"cid": client_id, "day": business_date},
+            )
+            arrival = cur.fetchone()
+        cur.execute(
+            "INSERT INTO arrival_wants (arrival_id, discipline_id) "
+            "SELECT %(aid)s, d.id FROM disciplines d WHERE d.code = ANY(%(codes)s) "
+            "ON CONFLICT (arrival_id, discipline_id) DO UPDATE "
+            "  SET status = 'waiting', served_by = NULL "
+            "  WHERE arrival_wants.status <> 'serving'",
+            {"aid": arrival["id"], "codes": list(disciplines)},
+        )
+    conn.commit()
+    return arrival
+
+
+def line_today(conn: psycopg.Connection, business_date: dt.date) -> list[dict]:
+    """Everybody in the salon's line today, one row per arrival, oldest first.
+
+    ONE query for every discipline rather than one per discipline: they are readings of the same
+    rows, and two queries could disagree about who is ahead of whom. Which of them a given
+    specialist may take is `arrivals.py`'s to decide, over a list a salon can hold.
+
+    The order here is a convenience for whoever reads the rows. The RULE is `arrivals.waiting_in`,
+    so the sort there is not a second spelling of this ORDER BY.
+
+    An arrival whose every want is finished drops out on the WHERE, so nothing has to sweep her.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT a.id, a.arrival_ref, a.arrived_at, c.name AS client_name,
+               COALESCE(ARRAY_AGG(d.code ORDER BY d.code)
+                        FILTER (WHERE w.status = 'waiting'), '{}'::text[]) AS waiting_for,
+               -- At most one, by ux_arrival_wants_one_serving_per_arrival — so this is THAT one
+               -- rather than a choice between several.
+               MAX(d.code) FILTER (WHERE w.status = 'serving') AS serving
+          FROM arrivals a
+          JOIN clients c       ON c.id = a.client_id
+          JOIN arrival_wants w ON w.arrival_id = a.id
+          JOIN disciplines d   ON d.id = w.discipline_id
+         WHERE a.business_date = %(day)s AND w.status IN ('waiting', 'serving')
+         GROUP BY a.id, a.arrival_ref, a.arrived_at, c.name
+         ORDER BY a.arrived_at, a.id
+        """,
+        {"day": business_date},
+    )
+
+
+def take_next(
+    conn: psycopg.Connection, arrival_id: int, discipline: str, specialist_id: int
+) -> bool:
+    """Hand this waiting client to that specialist. False when somebody got there first.
+
+    A conditional UPDATE rather than a look-then-write, exactly as `set_client_phone` is: the two
+    partial unique indexes are the guarantee and what is wanted here is whether the row moved. The
+    NOT EXISTS is the same rule the other way round — she cannot be taken out of one line while
+    another specialist has her in the other (§12).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE arrival_wants w SET status = 'serving', served_by = %(sid)s "
+            "FROM disciplines d "
+            "WHERE d.id = w.discipline_id AND d.code = %(code)s "
+            "  AND w.arrival_id = %(aid)s AND w.status = 'waiting' "
+            "  AND NOT EXISTS (SELECT 1 FROM arrival_wants o "
+            "                   WHERE o.arrival_id = w.arrival_id AND o.status = 'serving')",
+            {"aid": arrival_id, "code": discipline, "sid": specialist_id},
+        )
+        took = cur.rowcount == 1
+    conn.commit()
+    return took
+
+
+def serving_now(conn: psycopg.Connection, specialist_id: int) -> dict | None:
+    """Whom this specialist has with her right now, or None. At most one — see the partial index."""
+    return fetchone(
+        conn,
+        "SELECT c.name AS client_name, d.code AS discipline, w.arrival_id "
+        "  FROM arrival_wants w "
+        "  JOIN arrivals a    ON a.id = w.arrival_id "
+        "  JOIN clients c     ON c.id = a.client_id "
+        "  JOIN disciplines d ON d.id = w.discipline_id "
+        " WHERE w.served_by = %(sid)s AND w.status = 'serving'",
+        {"sid": specialist_id},
+    )
+
+
+def leave_line(conn: psycopg.Connection, client_id: int, business_date: dt.date) -> int:
+    """Take this client out of the line altogether today. Answers how many places that closed.
+
+    Every line rather than one: a client who is not here is not here for the other one either, and
+    cancelling half of her would leave a woman nobody can ever call (§12).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE arrival_wants w SET status = 'cancelled' "
+            "FROM arrivals a "
+            "WHERE a.id = w.arrival_id AND a.client_id = %(cid)s AND a.business_date = %(day)s "
+            "  AND w.status IN ('waiting', 'serving')",
+            {"cid": client_id, "day": business_date},
+        )
+        closed = cur.rowcount
+    conn.commit()
+    return closed

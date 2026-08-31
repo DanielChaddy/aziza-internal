@@ -83,3 +83,88 @@ def test_a_number_that_is_not_digits_is_refused_by_the_table(conn, clients):
     with pytest.raises(psycopg.errors.CheckViolation):
         clients("María", "maria", "809-555-0101")
     conn.rollback()
+
+
+# --- the line ---------------------------------------------------------------
+
+
+@pytest.fixture
+def arrival(conn, clients):
+    """An arrival with one want per discipline named, removed however the case ends."""
+
+    def make(name: str, *disciplines: str) -> tuple[int, dict[str, int]]:
+        client_id = clients(name, name.lower(), None)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO arrivals (arrival_ref, client_id, business_date) "
+                "VALUES (%(r)s || gen_random_uuid()::text, %(c)s, CURRENT_DATE) RETURNING id",
+                {"r": _REF, "c": client_id},
+            )
+            arrival_id = cur.fetchone()["id"]
+            wants = {}
+            for code in disciplines:
+                cur.execute(
+                    "INSERT INTO arrival_wants (arrival_id, discipline_id) "
+                    "SELECT %(a)s, id FROM disciplines WHERE code = %(d)s RETURNING id",
+                    {"a": arrival_id, "d": code},
+                )
+                wants[code] = cur.fetchone()["id"]
+        return arrival_id, wants
+
+    return make
+
+
+def _serve(conn, want_id: int, specialist_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE arrival_wants SET status = 'serving', served_by = %(s)s WHERE id = %(w)s",
+            {"w": want_id, "s": specialist_id},
+        )
+
+
+def test_two_specialists_cannot_have_one_woman_at_once(conn, arrival, make_specialist):
+    """THE product rule, made structural. That a client being attended in one line is absent from
+    the other is a thing the TABLE forbids, not a filter a query remembers to write — so a second
+    reader of the line cannot hand her to somebody else in the moment between two statements."""
+    _, wants = arrival("Carmen Schema", "nails", "wax")
+    one, two = make_specialist("nails"), make_specialist("wax")
+    _serve(conn, wants["nails"], one["id"])
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _serve(conn, wants["wax"], two["id"])
+
+
+def test_a_specialist_cannot_have_two_women_at_once(conn, arrival, make_specialist):
+    """The same shape and the same argument as `ux_sales_one_open_per_specialist`."""
+    _, first = arrival("Ana Schema", "nails")
+    _, second = arrival("Laura Schema", "nails")
+    her = make_specialist("nails")
+    _serve(conn, first["nails"], her["id"])
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        _serve(conn, second["nails"], her["id"])
+
+
+def test_one_place_per_line_per_arrival(conn, arrival):
+    """Changing her mind re-opens the row she has rather than writing a second, so no order can
+    hold the same woman twice."""
+    arrival_id, _ = arrival("Yaritza Schema", "nails")
+    with conn.cursor() as cur, pytest.raises(psycopg.errors.UniqueViolation):
+        cur.execute(
+            "INSERT INTO arrival_wants (arrival_id, discipline_id) "
+            "SELECT %(a)s, id FROM disciplines WHERE code = 'nails'",
+            {"a": arrival_id},
+        )
+
+
+def test_a_woman_being_attended_by_nobody_is_refused(conn, arrival):
+    """`serving` without a specialist is a client in a chair nothing can ever release."""
+    _, wants = arrival("Luisa Schema", "nails")
+    with conn.cursor() as cur, pytest.raises(psycopg.errors.CheckViolation):
+        cur.execute(
+            "UPDATE arrival_wants SET status = 'serving' WHERE id = %(w)s", {"w": wants["nails"]}
+        )
+
+
+def test_the_days_line_is_indexed(conn):
+    """The line is read on every turn that asks who is next, and an index is invisible to every
+    test that only asks for the right answer."""
+    assert "ix_arrivals_day" in _indexes(conn, "arrivals")

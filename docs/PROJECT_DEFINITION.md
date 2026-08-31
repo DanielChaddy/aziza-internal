@@ -17,18 +17,25 @@ rather than earning trust during the conversation (§3).
 
 ## §2 · Scope
 
-In scope: recording services against a named client, pricing them from the salon's catalog at the
-price that client pays, selling the client a product, taking payment across one or more methods,
-recording a tip, closing the sale against the specialist who did the work, charging a specialist
-for what she takes for herself, recording what she pays against that, and reporting each
-specialist's day.
+In scope: putting a client who has arrived into the salon's line, calling the next one out of it
+and taking a client out of it; recording services against a named client, pricing them from the
+salon's catalog at the price that client pays, selling the client a product, taking payment across
+one or more methods, recording a tip, closing the sale against the specialist who did the work,
+charging a specialist for what she takes for herself, recording what she pays against that, and
+reporting each specialist's day.
 
 An owner does all of the above against a named specialist as well as herself, and may
 read that specialist's day.
 
 Out of scope, and the assistant says so rather than improvising: appointments, changing a price,
 discounts, another specialist's figures **when the sender is not an owner**, anything about a
-client beyond her name, her telephone and which of the salon's two price columns she reads.
+client beyond her name, her telephone, which of the salon's two price columns she reads, and — for
+today only — which areas she is waiting for and when she arrived.
+
+**The line is not an appointment, and the difference is what keeps that refusal honest.** An
+appointment is a promise about a future time; the line is a fact about who is already standing in
+the salon. Nothing in §12 holds a future time, nothing can be booked and nothing can be moved, so
+a client asking to be put down for Thursday is refused exactly as she was before.
 
 The telephone is in scope because it is an IDENTITY rather than a contact detail: without it two
 people called María were one row, one balance and one history, and no report about a client could
@@ -397,3 +404,58 @@ This repository's GitHub issues, and nothing here keeps a second copy. The one e
 that spans the platform and its consumers: an item ordering a package's tag against this
 repository's pin cannot live where neither the package nor the sibling is, so it sits on the board
 the siblings use.
+
+## §12 · The line
+
+**One line for the whole salon, in the order people arrived.** Not a line per specialist: whoever
+is free takes whoever is next, and a client showing up does not have to know whose chair she wants.
+
+One arrival is one **visit by one woman**, and she may want more than one area on it — nails and
+wax, in either order, from two different people. So what she came for is a row per area rather than
+a column: `arrivals` holds who and when, `arrival_wants` holds each area and where it has got to.
+
+**Her place is the moment she walked in, and nothing ever rewrites it.** Two rules follow, and the
+salon runs on both:
+
+- She keeps her arrival-time place in every line she is in. Being served for nails does not spend
+  her place for wax.
+- While somebody has her she is **absent** from every line rather than behind it — she is in a
+  chair and cannot take a turn anywhere. Clients who arrived after her are taken ahead of her for
+  as long as that lasts, and the moment she is free she is ahead of them again.
+
+The second rule is what makes the first cost nothing. Had the design demoted her instead of
+removing her, she would lose the place her arrival gave her every time she was served, which is
+precisely the unfairness the line exists to prevent.
+
+**Both rules are one filter over one order, and neither is stored.** `arrivals.py` is arrival order
+with the attended removed; a position is derived on every read, exactly as every balance in this
+schema is. Two partial unique indexes make the second rule structural rather than remembered:
+`ux_arrival_wants_one_serving_per_arrival` — one woman cannot be in two chairs, so a second
+specialist reading the line cannot also take her — and
+`ux_arrival_wants_one_serving_per_specialist`, which is the same shape and the same argument as
+`ux_sales_one_open_per_specialist`.
+
+**A want ends when the ticket does**, in `queries.close_sale`, which is the one place both closing
+paths pass through. It is matched on the client as well as on the specialist, because she records
+between clients (§1) and has usually already called the next one by the time she charges the last:
+matched on her alone, closing that ticket would take the woman now in her chair out of the line.
+
+**A ticket is not the only way out**, and it must not be — a client who changes her mind or is not
+there when she is called never reaches one, and a want left `serving` is a specialist who can never
+call anybody again. `tools.remove_from_queue` takes her out of every line she is in, because a woman
+who is not here is not here for the other one either.
+
+**The line is a DAY's line**, scoped by `arrivals.business_date` and written by the app for the same
+reason a sale's is (§8): a night that runs past midnight belongs to the day it began. Without it
+tomorrow opens with everybody who was never called yesterday at the head of it, because their
+arrival time is earlier. There is deliberately no unique on `(client_id, business_date)` — a client
+who comes at ten and again at four is two arrivals, and a constraint forbidding the second would be
+wrong about an ordinary day. What `queries.record_arrival` will not do is put her in the line twice
+at once: it reuses the arrival she is still standing in and adds only what is new.
+
+**Which line a specialist may call from is her own area**, checked in the tool body where the
+resolved area is in hand and against the specialist the call is FOR rather than the sender — the
+same rule, in the same place, as the discipline on a service (§3). Holding two areas and naming
+neither is a question rather than a guess: a client taken out of the wrong line is a woman sent to
+the wrong chair.
+

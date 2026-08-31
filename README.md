@@ -16,10 +16,13 @@ Architecture at a glance:
 - **One agent** (`aziza_adk/agents/sales.py`): there is nothing to route between, and it is still
   built through the platform's graph factory so the input screen is attached rather than
   remembered.
-- **Ten tools and two layers of guard** (`aziza_adk/tools.py`, `guards.py`): identity resolved at
-  the edge before the Runner, a deterministic discipline check against the specialist the work is
-  booked to, and a confirm-first gate that refuses to charge a total the specialist has not been
-  shown.
+- **Twenty-three tools and two layers of guard** (`aziza_adk/tools.py`, `guards.py`): identity
+  resolved at the edge before the Runner, a deterministic discipline check against the specialist
+  the work is booked to, and a confirm-first gate that refuses to charge a total the specialist
+  has not been shown.
+- **One line for the whole salon** (`aziza_adk/arrivals.py`, `db/schema.sql`): a client keeps the
+  place her arrival gave her in every area she is waiting for, and is passed over only while
+  somebody has her. Both rules are one filter over one order, and neither is stored.
 - **One argument that can move a commission** (`on_behalf_of`), gated on a column rather than on
   wording: refused for anyone the database does not give the `owner` role, required of an owner
   who holds no discipline, and recorded in `sales.recorded_by` alongside whose work it was.
@@ -104,6 +107,11 @@ service that is not configured yet.
 12. **An owner.** As an owner who does no salon work: *"Le hice manicura normal a Laura"* → asked
     whose work it was, never booked to her. *"Yamilé le hizo manicura normal a Laura"* → the
     ticket, with *Trabajo de: Yamilé Reyes* on it, and the commission on Yamilé's day.
+13. **The line.** *"Llegó Carmen para uñas y depilación"*, then *"llegó Ana para depilación"* →
+    both in the salon's one line. As a nails specialist: *"¿quién sigue?"* → Carmen. Now
+    *"¿quién está esperando?"* → Ana is first for depilación, because somebody has Carmen.
+14. **Her place is kept.** Charge Carmen and ask again → she is ahead of Ana for depilación once
+    more. Being served for one area never spends her place in the other.
 
 ## Testing
 
