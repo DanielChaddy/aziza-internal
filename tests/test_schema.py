@@ -168,3 +168,95 @@ def test_the_days_line_is_indexed(conn):
     """The line is read on every turn that asks who is next, and an index is invisible to every
     test that only asks for the right answer."""
     assert "ix_arrivals_day" in _indexes(conn, "arrivals")
+
+
+# --- [5] What the salon buys ---------------------------------------------------------------
+
+
+@pytest.fixture
+def expense(conn, make_specialist):
+    """An expense row a test writes directly, at whatever status it wants."""
+
+    def make(owner_id: int, **over):
+        values = {
+            "ref": _REF,
+            "by": owner_id,
+            "status": "registered",
+            "supplier": "Suplidora",
+            "rnc": "131246813",
+            "ncf": "B0100000001",
+            "invoice_date": "2026-08-28",
+            "business_date": "2026-08-28",
+            "method": "cash",
+            "total": "1180.00",
+            **over,
+        }
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO expenses (expense_ref, recorded_by, status, supplier, rnc, ncf, "
+                "                      invoice_date, business_date, method, total_paid) "
+                "VALUES (%(ref)s || gen_random_uuid()::text, %(by)s, %(status)s, %(supplier)s, "
+                "        %(rnc)s, %(ncf)s, %(invoice_date)s, %(business_date)s, %(method)s, "
+                "        %(total)s) RETURNING id",
+                values,
+            )
+            return cur.fetchone()["id"]
+
+    return make
+
+
+def test_one_question_waiting_for_an_answer_per_owner(conn, sentinel, make_specialist, expense):
+    """ "The invoice I just sent you" has to mean one thing. The index holds under a race, which a
+    check in a tool does not — the same argument as one open ticket per specialist (§15)."""
+    owner = make_specialist(roles=("owner",))
+    expense(owner["id"], status="draft")
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        expense(owner["id"], status="draft", ncf="B0100000002")
+
+
+def test_the_same_supplier_invoice_cannot_be_registered_twice(
+    conn, sentinel, make_specialist, expense
+):
+    """It would come off the register twice, and DGII rejects a repeated comprobante too."""
+    owner = make_specialist(roles=("owner",))
+    expense(owner["id"])
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        expense(owner["id"])
+
+
+def test_a_voided_expense_does_not_hold_its_comprobante_hostage(
+    conn, sentinel, make_specialist, expense
+):
+    """A misread that got through is voided and re-entered, so the void must not block it."""
+    owner = make_specialist(roles=("owner",))
+    expense(owner["id"], status="void")
+    expense(owner["id"])
+
+
+def test_an_invoice_with_no_comprobante_can_be_registered_more_than_once(
+    conn, sentinel, make_specialist, expense
+):
+    """Two colmado receipts in a week are two expenses, and neither has a comprobante to be
+    unique on. A blanket index would have made the second one a collision (§15)."""
+    owner = make_specialist(roles=("owner",))
+    expense(owner["id"], ncf="")
+    expense(owner["id"], ncf="")
+
+
+def test_money_that_moved_names_the_account_it_moved_through(
+    conn, sentinel, make_specialist, expense
+):
+    """The pair is what keeps a credit purchase out of the register and a cash one in it: an
+    expense either moved money through an account on a day, or moved none at all (§15)."""
+    owner = make_specialist(roles=("owner",))
+    expense(owner["id"], business_date=None, method=None)
+    with pytest.raises(psycopg.errors.CheckViolation):
+        expense(owner["id"], business_date="2026-08-28", method=None, ncf="B0100000009")
+
+
+def test_what_the_register_and_the_report_read_are_both_indexed(conn):
+    """Two different questions over one table — one day's spend, and one month's filing — so one
+    index cannot serve both."""
+    found = _indexes(conn, "expenses")
+    assert "ix_expenses_business_date" in found
+    assert "ix_expenses_period" in found

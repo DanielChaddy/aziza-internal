@@ -383,4 +383,92 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_arrival_wants_one_serving_per_specialist
 CREATE UNIQUE INDEX IF NOT EXISTS ux_arrival_wants_one_serving_per_arrival
     ON arrival_wants (arrival_id) WHERE status = 'serving';
 
+-- WHAT THE SALON BUYS, one row per photographed supplier invoice (§15).
+--
+-- `recorded_by` and no `specialist_id`, which is the one table where that pair collapses: an
+-- expense is the salon's and carries no commission, so there is nobody for it to be booked to.
+CREATE TABLE IF NOT EXISTS expenses (
+    id             SERIAL PRIMARY KEY,
+    expense_ref    TEXT NOT NULL UNIQUE,
+    recorded_by    INTEGER NOT NULL REFERENCES specialists (id),
+    -- 'draft' is read off a photograph and shown to her; nothing else reads it. 'void' rather
+    -- than a delete: the register was already reduced, and an owner's entry is not destroyable.
+    status         TEXT NOT NULL DEFAULT 'draft'
+                   CHECK (status IN ('draft', 'registered', 'void')),
+
+    -- What the 606 needs from the paper.
+    supplier       TEXT NOT NULL,
+    rnc            TEXT NOT NULL DEFAULT '',
+    -- Derived from the digit count of `rnc`, so nothing asks her for it (aziza_adk/fiscal.py).
+    tipo_id        TEXT NOT NULL DEFAULT '',
+    ncf            TEXT NOT NULL DEFAULT '',
+    ncf_modificado TEXT NOT NULL DEFAULT '',
+    category       TEXT NOT NULL DEFAULT '',
+    invoice_date   DATE NOT NULL,
+
+    -- THE DAY THE MONEY LEFT, and the only date the register reads. Also what the 606 files as
+    -- Fecha Pago, so the two are one column rather than two that could disagree.
+    --
+    -- NULL is an invoice bought on terms: nothing has moved, so no drawer is short of it. Same
+    -- shape and same argument as `specialist_ledger.method` (§15).
+    business_date  DATE,
+    method         TEXT CHECK (method IN ('cash', 'banreservas', 'bhd')),
+    CHECK ((method IS NULL) = (business_date IS NULL)),
+    -- Stored rather than derived at render time: an account name cannot say whether the money
+    -- moved as a transfer or on a card, and the 606 distinguishes them.
+    forma_pago     TEXT NOT NULL DEFAULT '',
+
+    bienes         NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (bienes >= 0),
+    servicios      NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (servicios >= 0),
+    itbis          NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (itbis >= 0),
+    isc            NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (isc >= 0),
+    otros          NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (otros >= 0),
+    propina_legal  NUMERIC(12, 2) NOT NULL DEFAULT 0 CHECK (propina_legal >= 0),
+    -- WHAT LEFT THE ACCOUNT, reconciled against the parts above and never derived from them: a
+    -- misread ITBIS would otherwise change what comes off the register in silence (§15).
+    total_paid     NUMERIC(12, 2) NOT NULL CHECK (total_paid > 0),
+
+    -- The salon's own tax treatment. Zero because nothing asks her: an owner between clients
+    -- cannot answer "proporcionalidad", and whoever files the report adjusts them (§15).
+    --
+    -- `Monto Facturado` and `ITBIS por Adelantar` are absent deliberately — both are sums of
+    -- columns already here, and a stored total is one that can disagree with its own parts.
+    itbis_retenido          NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    itbis_proporcionalidad  NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    itbis_costo             NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    itbis_percibido         NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    isr_tipo_retencion      TEXT NOT NULL DEFAULT '',
+    isr_retencion           NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    isr_percibido           NUMERIC(12, 2) NOT NULL DEFAULT 0,
+
+    -- Whether this can be a LINE on a 606. False needs both halves missing to be ordinary — a
+    -- colmado receipt — and the report excludes it rather than emitting an invalid line.
+    on_606         BOOLEAN NOT NULL DEFAULT FALSE,
+    -- The transport's own handle on the photograph. Re-fetchable in practice and not by contract,
+    -- and it dies with the bot token: the paper invoice is the document, this is a convenience.
+    photo_file_id  TEXT NOT NULL DEFAULT '',
+    recorded_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One question waiting for an answer per owner, so "the invoice I just sent you" is unambiguous.
+-- The same shape as `ux_sales_one_open_per_specialist`: the index holds under a race and a check
+-- in a tool does not. `queries.create_expense_draft` REPLACES rather than colliding with it —
+-- photographing a second invoice while the first is still on screen is the ordinary case.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_expenses_one_draft_per_owner
+    ON expenses (recorded_by) WHERE status = 'draft';
+
+-- THE SAME INVOICE TWICE. It would come off the register twice, and DGII rejects a repeated
+-- comprobante too — so it is refused by the insert rather than by a read-then-write (§15).
+-- Registered only: a voided row must not hold its comprobante hostage.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_expenses_ncf
+    ON expenses (rnc, ncf) WHERE status = 'registered' AND ncf <> '';
+
+CREATE INDEX IF NOT EXISTS ix_expenses_business_date
+    ON expenses (business_date) WHERE status = 'registered';
+
+-- What one month's 606 reads, which is by the comprobante's own date rather than by the day the
+-- money moved: an invoice paid late still belongs to the period it was issued in.
+CREATE INDEX IF NOT EXISTS ix_expenses_period
+    ON expenses (invoice_date) WHERE status = 'registered';
+
 COMMIT;
