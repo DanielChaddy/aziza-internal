@@ -35,7 +35,7 @@ logger = logging.getLogger("aziza_adk.telegram")
 # left alone this writes a live credential into the logs on every single turn. Silenced rather
 # than redacted: there is nothing in an httpx request line worth the risk of getting a filter
 # slightly wrong. WARNING and above still reach the log.
-# TODO: belongs in agent-platform's channel-telegram, which owns the client that builds the URL.
+# TODO: AB#5351 — belongs in channel-telegram, which owns the client that builds the URL.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # These four reach a specialist with NO model in the path, so the register is fixed at the
