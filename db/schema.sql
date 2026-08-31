@@ -328,4 +328,59 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     UNIQUE (specialist_id, business_date)
 );
 
+-- WHO IS HERE. Nothing in this table holds a future time, which is what keeps §2's refusal of
+-- appointments a property rather than a promise (§12).
+--
+-- Not `visits`: `receipts.Visit` and `queries.client_visits` already mean a charged ticket in her
+-- history, and one word cannot mean both.
+CREATE TABLE IF NOT EXISTS arrivals (
+    id            SERIAL PRIMARY KEY,
+    arrival_ref   TEXT NOT NULL UNIQUE,
+    client_id     INTEGER NOT NULL REFERENCES clients (id) ON DELETE CASCADE,
+    -- THE PRIORITY, and the only thing any order ever reads. Never rewritten: a client attended
+    -- in one discipline keeps this in the other, which is the whole of §12.
+    arrived_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The salon's day, written by the app exactly as on `sales`. Without it a line inherits
+    -- yesterday's uncalled arrivals at the head of it, because their arrival time is earlier (§8).
+    business_date DATE NOT NULL
+);
+
+-- Deliberately no UNIQUE on (client_id, business_date): a client who comes at ten and again at
+-- four is two arrivals, and a constraint forbidding the second would be wrong about an ordinary
+-- day. Reusing the one she is still standing in is `queries.record_arrival`'s job instead.
+
+-- The whole read is one day's line in arrival order, so the ordered read IS this index rather
+-- than a sort over it.
+CREATE INDEX IF NOT EXISTS ix_arrivals_day ON arrivals (business_date, arrived_at);
+
+-- WHAT SHE CAME FOR, one row per discipline. A row rather than a column because she can want
+-- nails AND wax on one arrival and goes to whichever frees up first (§12).
+CREATE TABLE IF NOT EXISTS arrival_wants (
+    id            SERIAL PRIMARY KEY,
+    arrival_id    INTEGER NOT NULL REFERENCES arrivals (id) ON DELETE CASCADE,
+    discipline_id INTEGER NOT NULL REFERENCES disciplines (id),
+    -- 'cancelled' is she left, however she left: a no-show and a change of mind are one row
+    -- because no rule turns on which, and a status nothing reads is one nobody maintains.
+    status        TEXT NOT NULL DEFAULT 'waiting'
+                  CHECK (status IN ('waiting', 'serving', 'done', 'cancelled')),
+    -- WHO HAS HER. Kept after she is done, which is what lets a closing ticket find the want it
+    -- finished (`queries.close_sale`).
+    served_by     INTEGER REFERENCES specialists (id),
+    CHECK (status <> 'serving' OR served_by IS NOT NULL),
+    -- One place per line per arrival. Changing her mind re-opens this row rather than writing a
+    -- second, so no order can hold the same woman twice.
+    UNIQUE (arrival_id, discipline_id)
+);
+
+-- One client at a time per specialist — the same shape and the same argument as
+-- `ux_sales_one_open_per_specialist`: the index holds under a race and a check in a tool does not.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_arrival_wants_one_serving_per_specialist
+    ON arrival_wants (served_by) WHERE status = 'serving';
+
+-- And one at a time per ARRIVAL, which is the rule that makes the other line skip her: while
+-- somebody has her she cannot also be taken out of the second line, and two specialists calling
+-- at the same instant lose one of the two here rather than both walking off with her (§12).
+CREATE UNIQUE INDEX IF NOT EXISTS ux_arrival_wants_one_serving_per_arrival
+    ON arrival_wants (arrival_id) WHERE status = 'serving';
+
 COMMIT;

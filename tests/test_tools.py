@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from aziza_adk import queries, receipts, session, tools
-from tests.conftest import service_named
+from tests.conftest import KNOWN_CLIENTS, service_named
 
 MANI = service_named("Manicura + pintura normal")  # nails, RD$300 F / RD$400 M
 PEDI = service_named("Pedicura + pintura normal")  # nails, RD$400 F / RD$500 M
@@ -32,6 +32,10 @@ LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
         lambda c: tools.buy_product("agua", 1, tool_context=c),
         lambda c: tools.settle_debt("25", "productos", "efectivo", tool_context=c),
         lambda c: tools.my_day(tool_context=c),
+        lambda c: tools.add_to_queue("Laura", "uñas", tool_context=c),
+        lambda c: tools.call_next(tool_context=c),
+        lambda c: tools.who_is_waiting(tool_context=c),
+        lambda c: tools.remove_from_queue("Laura", tool_context=c),
     ],
 )
 def test_every_tool_refuses_a_session_with_no_specialist(ctx, call):
@@ -1498,3 +1502,163 @@ def test_once_the_ticket_closes_there_is_no_way_back_to_her(working):
     assert tools.set_client_phone(_A, client="Ingrid", tool_context=context)["error"] == (
         "unknown_client"
     )
+
+
+# --- [19] The line ------------------------------------------------------------------------------
+
+
+def _waiting(answer: dict, area: str) -> list[str]:
+    """The names in one area's line, off what `who_is_waiting` returned."""
+    for line in answer.get("lines", ()):
+        if line["area"] == area:
+            return line["waiting"]
+    return []
+
+
+def _charge(context, client: str, service: str = "manicura normal") -> dict:
+    """One whole ticket, opened and settled — the ordinary way a want ends."""
+    tools.start_ticket(client, tool_context=context)
+    tools.add_service(service, 1, tool_context=context)
+    return tools.record_payment("efectivo", "300", "0", tool_context=context)
+
+
+def test_she_calls_the_next_client_in_her_own_area(working):
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    answer = tools.call_next(tool_context=context)
+    assert answer["called"] is True
+    assert answer["client"] == "Carmen"
+
+
+def test_a_client_waiting_for_another_area_is_not_hers_to_call(working):
+    """Nobody free is an ANSWER rather than an error: the line is not empty, it simply holds no
+    woman she may take."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "depilación", tool_context=context)
+    answer = tools.call_next(tool_context=context)
+    assert answer["called"] is False
+    assert answer["message"] == tools.QUEUE_EMPTY_MSG
+
+
+def test_the_woman_she_called_is_not_offered_to_anybody_else(working, make_specialist, ctx):
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    assert tools.call_next(tool_context=context)["called"] is True
+    other = ctx(make_specialist("nails"))
+    assert tools.call_next(tool_context=other)["called"] is False
+
+
+def test_a_specialist_who_already_has_somebody_is_told_who(working):
+    """Refused rather than closed for her: nothing puts a want back, so calling again must not
+    quietly mark the woman in her chair as finished."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    tools.add_to_queue("Ana", "uñas", tool_context=context)
+    tools.call_next(tool_context=context)
+    answer = tools.call_next(tool_context=context)
+    assert answer["error"] == "already_serving"
+    assert "Carmen" in answer["message"]
+
+
+def test_charging_her_puts_her_back_where_she_was_in_the_other_line(working, make_specialist, ctx):
+    """THE property, end to end. Carmen arrives first wanting both; Ana arrives after wanting only
+    wax. While nails has Carmen, Ana is first for wax — and the moment Carmen's ticket closes she
+    is ahead of Ana again, because nothing ever moved her."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas y depilación", tool_context=context)
+    tools.add_to_queue("Ana", "depilación", tool_context=context)
+
+    assert tools.call_next(tool_context=context)["client"] == "Carmen"
+    assert _waiting(tools.who_is_waiting(tool_context=context), "Depilación") == ["Ana"]
+
+    assert _charge(context, "Carmen")["paid"] is True
+    assert _waiting(tools.who_is_waiting(tool_context=context), "Depilación") == ["Carmen", "Ana"]
+
+    wax = ctx(make_specialist("wax"))
+    assert tools.call_next(tool_context=wax)["client"] == "Carmen"
+
+
+def test_charging_somebody_else_leaves_the_woman_she_called_alone(working):
+    """She records BETWEEN clients (§1), so by the time she charges the last one she has usually
+    already called the next. Closing that ticket must not take the woman she just called out of
+    the line."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    tools.call_next(tool_context=context)
+
+    assert _charge(context, "Laura")["paid"] is True
+
+    assert tools.call_next(tool_context=context)["error"] == "already_serving"
+
+
+def test_closing_with_a_debt_frees_her_too(working):
+    """The other way a ticket closes reaches the same hook."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    tools.call_next(tool_context=context)
+    tools.start_ticket("Carmen", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.show_ticket(tool_context=context)
+    tools.close_ticket_with_debt(tool_context=context)
+    assert tools.call_next(tool_context=context)["called"] is False
+
+
+def test_a_client_who_left_is_out_of_every_line(working):
+    """A woman who is not here is not here for the other one either."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas y depilación", tool_context=context)
+    assert tools.remove_from_queue("Carmen", tool_context=context)["removed"] is True
+    answer = tools.who_is_waiting(tool_context=context)
+    assert _waiting(answer, "Uñas") == []
+    assert _waiting(answer, "Depilación") == []
+
+
+def test_a_client_who_is_not_in_the_line_is_refused_rather_than_invented(working):
+    context, _ = working
+    assert tools.remove_from_queue("Carmen", tool_context=context)["error"] == "not_in_line"
+
+
+def test_the_one_she_is_attending_is_named_apart_from_the_lines(working):
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    tools.call_next(tool_context=context)
+    answer = tools.who_is_waiting(tool_context=context)
+    assert answer["being_attended"] == ["Carmen"]
+    assert _waiting(answer, "Uñas") == []
+
+
+def test_the_line_a_specialist_reads_carries_no_telephone(working):
+    """Her number tells two clients apart; it is not a thing a specialist reads
+    (docs/BRAND_VOICE.md §7)."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    rendered = repr(tools.who_is_waiting(tool_context=context))
+    assert KNOWN_CLIENTS["Carmen"] not in rendered
+
+
+def test_two_areas_and_no_name_is_a_question_rather_than_a_guess(make_specialist, ctx):
+    """Taking a client out of the wrong line is a woman sent to the wrong chair."""
+    both = ctx(make_specialist("nails", "wax"))
+    answer = tools.call_next(tool_context=both)
+    assert answer["error"] == "which_area"
+    assert sorted(answer["options"]) == ["Depilación", "Uñas"]
+
+
+def test_an_area_she_does_not_hold_is_refused(working):
+    context, _ = working
+    assert tools.call_next("depilación", tool_context=context)["error"] == "not_your_area"
+
+
+def test_an_area_the_salon_does_not_have_is_refused_rather_than_matched(working):
+    context, _ = working
+    assert tools.add_to_queue("Carmen", "masaje", tool_context=context)["error"] == "unknown_area"
+
+
+def test_asking_twice_does_not_put_one_woman_in_the_line_twice(working):
+    """She scans again, or a specialist adds her again. Her place is the one she already has."""
+    context, _ = working
+    tools.add_to_queue("Carmen", "uñas", tool_context=context)
+    tools.add_to_queue("Carmen", "uñas y depilación", tool_context=context)
+    answer = tools.who_is_waiting(tool_context=context)
+    assert _waiting(answer, "Uñas") == ["Carmen"]
+    assert _waiting(answer, "Depilación") == ["Carmen"]

@@ -112,6 +112,14 @@ def sentinel(conn):
                 f"DELETE FROM register_closes WHERE closed_by IN {sentinels}",
                 {"prefix": SENTINEL_REF + "%"},
             )
+            # Before the specialists, and for the same reason the sales are: `served_by` has no
+            # ON DELETE action either, because in the salon a specialist who has taken a client
+            # out of the line is not erasable. The wants cascade from the arrival.
+            cur.execute(
+                f"DELETE FROM arrivals WHERE id IN "
+                f"  (SELECT arrival_id FROM arrival_wants WHERE served_by IN {sentinels})",
+                {"prefix": SENTINEL_REF + "%"},
+            )
             cur.execute(
                 "DELETE FROM specialists WHERE specialist_ref LIKE %(prefix)s",
                 {"prefix": SENTINEL_REF + "%"},
@@ -119,6 +127,17 @@ def sentinel(conn):
             # A client the tests invented, recognised by nothing pointing at her rather than by a
             # prefix — she is named the way a real one is. Left behind she would carry a balance
             # into the next run, and "Laura owes nothing" is a case this suite asserts.
+            # Every arrival this suite can have made: the clients it registers by name, and the
+            # ones a case invented. `arrivals.client_id` cascades, but a KNOWN client survives the
+            # sweep below once she has a sale — and her place in the line would survive with her,
+            # which is one case leaving the next one a woman already standing in it.
+            cur.execute(
+                "DELETE FROM arrivals WHERE client_id IN "
+                "  (SELECT id FROM clients WHERE phone = ANY(%(phones)s)) "
+                "OR client_id IN (SELECT c.id FROM clients c WHERE NOT EXISTS "
+                "     (SELECT 1 FROM sales s WHERE s.client_id = c.id))",
+                {"phones": list(KNOWN_CLIENTS.values())},
+            )
             cur.execute(
                 "DELETE FROM clients c WHERE NOT EXISTS "
                 "  (SELECT 1 FROM sales s WHERE s.client_id = c.id) "
