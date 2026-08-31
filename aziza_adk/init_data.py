@@ -31,9 +31,11 @@ REASON_FROM_THE_FUTURE = "from_the_future"
 #: rejects every real open with no other symptom.
 _KEYING = b"WebAppData"
 
-#: Fields excluded from the checked string. `hash` is the signature itself; `signature` is
-#: Telegram's separate third-party Ed25519 field and is not part of this HMAC.
-_NOT_SIGNED = ("hash", "signature")
+#: The ONE field excluded from the checked string. Telegram signs "all received fields, sorted
+#: alphabetically" minus this one — `signature` included, even though it belongs to the separate
+#: third-party Ed25519 method, because it is a received field like any other. Dropping it too
+#: rejects every real launch with nothing to see but `bad_signature`.
+_NOT_SIGNED = ("hash",)
 
 #: How far ahead of us a launch may claim to be before it is clock skew rather than staleness. The
 #: two are different operational problems and collapsing them sends whoever reads the log to the
