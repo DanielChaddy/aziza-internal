@@ -56,7 +56,7 @@ AFTER_HOURS_TOOL_NAMES = frozenset(
 
 #: What only an owner may do at all, at any hour. `guards.before_tool_guard` refuses these for
 #: anyone else; the bodies re-check, as they do for `on_behalf_of`.
-OWNER_TOOL_NAMES = frozenset({"close_register", "record_loan", "salon_day"})
+OWNER_TOOL_NAMES = frozenset({"close_register", "record_loan", "salon_day", "client_history"})
 
 #: Every tool needs a registered specialist behind it. `guards.before_tool_guard` refuses each of
 #: them without one; the bodies re-check.
@@ -77,6 +77,7 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "close_register",
         "record_loan",
         "salon_day",
+        "client_history",
     }
 )
 
@@ -108,6 +109,10 @@ TICKET_TOOL_NAMES = frozenset(
 )
 
 MAX_QUANTITY = 20
+
+#: How many visits a client's history lists. An owner between clients does not page, and the
+#: render says how many older ones there are rather than truncating in silence.
+MAX_HISTORY_VISITS = 6
 
 _TZ = ZoneInfo(config.TIMEZONE)
 
@@ -162,6 +167,7 @@ BAD_PHONE_MSG = "No entendí el teléfono. Dímelo con los diez dígitos, por ej
 ANOTHER_CLIENT_MSG = (
     "Ya tengo una clienta con ese nombre y otro teléfono. ¿Es otra clienta, o revisamos el número?"
 )
+UNKNOWN_CLIENT_MSG = "No tengo a esa clienta en el salón."
 NO_CREDIT_WALK_IN_MSG = (
     "A esa clienta no le puedo fiar: no tengo su teléfono para buscarla en la próxima visita."
 )
@@ -1293,6 +1299,60 @@ def salon_day(tool_context: ToolContext = None) -> dict:
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
+
+
+def client_history(client: str, client_phone: str = "", tool_context: ToolContext = None) -> dict:
+    """Everything the salon has charged one client, and what she still owes. Owners only.
+
+    Args:
+        client: Her name, as the owner said it.
+        client_phone: Her number, ONLY when a previous call asked for it. Empty otherwise.
+
+    Returns:
+        {"summary": str} — send it as it came — or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    name = (client or "").strip()
+    if not name:
+        return {"error": "no_client_name", "message": NEED_CLIENT_NAME_MSG}
+    key, refused = _phone(client_phone)
+    if refused is not None:
+        return refused
+    try:
+        with queries.connect() as conn:
+            picked = clients.pick(clients.roster(queries.clients_named(conn, name)), key)
+            if picked.candidates:
+                return {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+            if (who := picked.match) is None:
+                return {"error": "unknown_client", "message": UNKNOWN_CLIENT_MSG}
+            totals = queries.client_totals(conn, who.client_id)
+            visits = queries.client_visits(conn, who.client_id, MAX_HISTORY_VISITS)
+            balance = queries.client_balance(conn, who.client_id)
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+    return {
+        "summary": receipts.render_client_history(
+            who.name,
+            [
+                receipts.Visit(
+                    day=row["business_date"],
+                    items=row["items"],
+                    total=row["total"],
+                    specialist=row["specialist"],
+                    left_owing=row["left_owing"],
+                )
+                for row in visits
+            ],
+            total_visits=totals["visits"],
+            billed=totals["billed"],
+            balance=balance,
+            first_visit=totals["first_visit"],
+            phone=clients.formatted(who.phone),
+        )
+    }
 
 
 def my_day(on_behalf_of: str = "", tool_context: ToolContext = None) -> dict:

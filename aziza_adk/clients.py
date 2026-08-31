@@ -65,6 +65,12 @@ def phone_key(raw: str) -> str | None:
     return digits if len(digits) == PHONE_DIGITS else None
 
 
+def formatted(phone: str) -> str:
+    """`809-555-0101`. The grouping a person reads a number in, for the one place one is shown:
+    a report an owner asked for (docs/BRAND_VOICE.md §7). Anything else comes back as it came."""
+    return f"{phone[:3]}-{phone[3:6]}-{phone[6:]}" if len(phone) == PHONE_DIGITS else phone
+
+
 def pick(roster: Sequence[Client], phone: str = "") -> Resolution[Client]:
     """Which of the clients sharing one name this is.
 

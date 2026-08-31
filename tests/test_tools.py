@@ -1112,3 +1112,119 @@ def test_settling_never_registers_anybody(working, conn):
     assert answer["error"] == "unknown_client"
     row = queries.fetchone(conn, "SELECT COUNT(*) AS n FROM clients WHERE folded = 'ingrid'")
     assert row["n"] == 0
+
+
+# --- [15] What one client has had done ---------------------------------------------------------
+# The report is only about ONE woman because [12] made her one row. Built on the old identity it
+# would have shown two people's visits as one history, to an owner, formatted authoritatively.
+
+
+def _history(owner_ctx, client: str = "Ingrid", **kw) -> str:
+    return tools.client_history(client, tool_context=owner_ctx, **kw)["summary"]
+
+
+def test_her_visits_come_back_newest_first(working, owner):
+    """The order she would tell it in."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.record_payment("efectivo", "300", "0", tool_context=context)
+    tools.start_ticket("Ingrid", tool_context=context)
+    tools.add_service("pedicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "400", "0", tool_context=context)
+
+    out = _history(owner)
+    assert out.index("Pedicura") < out.index("Manicura"), "the later visit is listed first"
+    assert "2 visitas" in out
+
+
+def test_a_visit_shows_the_price_that_was_actually_charged(working, owner):
+    """Read off the sale rather than re-derived from the catalog: this service is RD$300.00 for a
+    woman and RD$400.00 for a man, and the ticket said which (§4)."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, client_gender="hombre", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "400", "0", tool_context=context)
+    assert "RD$400.00" in _history(owner)
+
+
+def test_a_ticket_paid_in_three_parts_is_one_visit(working, owner):
+    """THE fan-out, on the payments side. A join to `sale_payments` would list this sale three
+    times and treble what it came to, and the figure would still look like money."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.record_payment("efectivo", "100", "0", tool_context=context)
+    tools.record_payment("banreservas", "100", "0", tool_context=context)
+    tools.record_payment("bhd", "100", "0", tool_context=context)
+
+    out = _history(owner)
+    assert out.count("• ") == 1
+    assert "1 visita" in out
+    assert "Total facturado: RD$300.00" in out
+
+
+def test_a_ticket_with_two_services_is_one_visit_at_its_whole_total(working, owner):
+    """The fan-out on the lines side, and both services are named on the one line."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.add_service("pedicura normal", 1, tool_context=context)
+    tools.record_payment("efectivo", "700", "0", tool_context=context)
+
+    out = _history(owner)
+    assert out.count("• ") == 1
+    assert "Manicura + pintura normal, Pedicura + pintura normal" in out
+    assert "RD$700.00" in out
+
+
+def test_a_voided_ticket_is_not_a_visit(working, owner):
+    """`WORKED_STATUSES` applies here as everywhere: it never happened."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.void_ticket(tool_context=context)
+    assert _history(owner) == "Ingrid todavía no tiene visitas cobradas."
+
+
+def test_settling_later_moves_what_she_owes_now_and_not_the_visit(working, owner):
+    """The two figures, end to end. The visit records what she left owing THAT day and cannot be
+    rewritten by a payment made weeks after it."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+    before = _history(owner)
+    assert "(quedó debiendo RD$300.00)" in before
+    assert "Debe ahora: RD$300.00" in before
+
+    tools.settle_client_debt("Ingrid", "300", "efectivo", client_phone=_A, tool_context=context)
+    after = _history(owner)
+    assert "(quedó debiendo RD$300.00)" in after, "what happened that day did not change"
+    assert "Debe ahora" not in after
+
+
+def test_a_client_the_salon_never_saw_is_refused_rather_than_invented(owner, conn):
+    context = owner
+    assert tools.client_history("Ingrid", tool_context=context)["error"] == "unknown_client"
+    row = queries.fetchone(conn, "SELECT COUNT(*) AS n FROM clients WHERE folded = 'ingrid'")
+    assert row["n"] == 0
+
+
+def test_a_history_for_a_shared_name_asks_which_one(working, owner):
+    """A history of the wrong woman is worse than none: it looks like a fact, and nobody at the
+    till is there to contest it."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.record_payment("efectivo", "300", "0", tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.client_history("Ingrid", tool_context=owner)["error"] == "ambiguous_client"
+
+
+def test_a_clients_history_is_an_owners_alone(working):
+    """The body refuses even though the guard already did."""
+    context, _ = working
+    assert tools.client_history("Ingrid", tool_context=context)["error"] == "owner_only"
+
+
+def test_the_guard_knows_the_client_report_is_an_owners():
+    """Named as a literal rather than parametrized over the set. Every owner-only test reads that
+    set, so a tool MISSING from it is invisible to all of them — which is this tool's failure
+    shape, not a hypothetical."""
+    assert "client_history" in tools.OWNER_TOOL_NAMES

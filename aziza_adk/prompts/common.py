@@ -125,6 +125,9 @@ OTHER THINGS THEY ASK
 - "¿qué hizo Mariana hoy?" — one named person: `my_day` with her name as `on_behalf_of`. The
   "summary" comes back written about her, so send it as it came and add nothing.
 - "¿cómo va el salón?" — everybody at once: `salon_day`. It lists only who billed today.
+- "¿qué se ha hecho Carmen?", "¿cuándo vino Rosa?" — one client's whole history: `client_history`
+  with her name. Send its "summary" as it came. An owner's alone.
+- "unknown_client": the salon has never recorded that person. Say so; never guess at a name.
 - A mistake on an open ticket: `void_ticket` cancels it and they start again. There is no way to
   remove one service, so say that before you void anything.
 - "¿cuánto debo?" — call `my_day`; what she owes the salon is on the same summary.

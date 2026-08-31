@@ -10,11 +10,14 @@ from decimal import Decimal
 
 import pytest
 
+from aziza_adk.money import ZERO
 from aziza_adk.receipts import (
     GENDER_ASSUMED_TEXT,
     WALK_IN_TEXT,
     Line,
     Payment,
+    Visit,
+    render_client_history,
     render_day,
     render_receipt,
     render_ticket,
@@ -373,3 +376,89 @@ def test_tips_are_not_in_what_accumulates():
 
 def test_a_day_with_no_payday_named_says_nothing_about_one():
     assert "Acumulado" not in _day()
+
+
+# --- [7] What one client has had done ---------------------------------------------------------
+
+
+def _visit(day: int, **kw) -> Visit:
+    base = {
+        "day": dt.date(2026, 8, day),
+        "items": "Manicura normal",
+        "total": Decimal("300.00"),
+        "specialist": "Yamilé",
+    }
+    return Visit(**{**base, **kw})
+
+
+def _history(visits=None, **kw) -> str:
+    base = {
+        "total_visits": 2,
+        "billed": Decimal("600.00"),
+        "balance": ZERO,
+        "first_visit": dt.date(2026, 3, 14),
+        "phone": "809-555-0101",
+    }
+    return render_client_history("Carmen", visits or [_visit(22), _visit(8)], **{**base, **kw})
+
+
+def test_a_visit_carries_its_day_its_work_its_total_and_whose_hands():
+    """The four things the owner asked about, on one line, and the figure is the tool's."""
+    assert "• 22 de agosto de 2026 — Manicura normal — RD$300.00 — Yamilé" in _history()
+
+
+def test_the_day_in_a_list_drops_the_weekday():
+    """Six of "sábado 22 de agosto de 2026" is three wrapped lines per visit on a phone."""
+    assert "sábado" not in _history()
+
+
+def test_what_she_left_owing_that_day_is_not_what_she_owes_now():
+    """TWO figures that must never read as one. A later payment carries no `sale_id`, so it can
+    never be attributed back to a visit — which is why the tenses differ."""
+    out = _history([_visit(22), _visit(8, left_owing=Decimal("100.00"))], balance=Decimal("50.00"))
+    assert "(quedó debiendo RD$100.00)" in out
+    assert "Debe ahora: RD$50.00" in out
+
+
+def test_a_client_who_owes_nothing_now_is_not_told_she_does():
+    assert "Debe ahora" not in _history()
+
+
+def test_a_history_longer_than_the_page_says_how_many_more():
+    """Truncating in silence reads as "that is all of it"."""
+    assert "Hay 6 visitas más antes de esas." in _history(total_visits=8)
+
+
+def test_a_history_that_fits_says_nothing_about_more():
+    assert "más antes de esas" not in _history()
+
+
+def test_one_visit_is_not_said_in_the_plural():
+    out = render_client_history(
+        "Carmen",
+        [_visit(22)],
+        total_visits=1,
+        billed=Decimal("300.00"),
+        balance=ZERO,
+        first_visit=dt.date(2026, 8, 22),
+    )
+    assert "1 visita desde" in out and "1 visitas" not in out
+
+
+def test_a_client_with_nothing_charged_yet_still_gets_an_answer():
+    """An opened-then-voided ticket is a real state, and raising on it would answer a question
+    with a stack trace."""
+    out = render_client_history(
+        "Carmen", [], total_visits=0, billed=ZERO, balance=ZERO, first_visit=None
+    )
+    assert out == "Carmen todavía no tiene visitas cobradas."
+
+
+def test_the_number_is_shown_here_and_only_here():
+    """This is the report it exists for, and its reader is an owner — docs/BRAND_VOICE.md §7."""
+    assert "Tel 809-555-0101" in _history()
+    assert "809" not in render_ticket("Carmen", [MANI], Decimal("800.00"))
+
+
+def test_a_client_with_no_number_is_reported_without_one():
+    assert "Tel" not in _history(phone="")

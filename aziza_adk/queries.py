@@ -893,6 +893,54 @@ def day_totals(conn: psycopg.Connection, specialist_id: int, business_date: dt.d
     )
 
 
+# --- what one client has had done -------------------------------------------
+
+
+def client_visits(conn: psycopg.Connection, client_id: int, limit: int) -> list[dict]:
+    """One row per charged visit, newest first, at the prices the ticket actually carried (§4).
+
+    Every child table is reached through its OWN correlated subquery rather than a join, for the
+    reason `day_totals` gives: `sale_lines` and `sale_payments` each fan out independently, so one
+    query joining both multiplies a sale's total by the number of payments it took — and the
+    figure that comes out still looks like money.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT s.business_date,
+               sp.full_name AS specialist,
+               s.services_total + s.products_total AS total,
+               COALESCE((SELECT string_agg(item.name, ', ' ORDER BY item.ord, item.id) FROM (
+                            SELECT l.service_name AS name, 1 AS ord, l.id
+                              FROM sale_lines l WHERE l.sale_id = s.id
+                            UNION ALL
+                            SELECT pl.product_name, 2, pl.id
+                              FROM sale_product_lines pl WHERE pl.sale_id = s.id
+                        ) item), '') AS items,
+               COALESCE((SELECT SUM(le.amount) FROM client_ledger le
+                          WHERE le.sale_id = s.id AND le.kind = 'debt'), 0) AS left_owing
+          FROM sales s JOIN specialists sp ON sp.id = s.specialist_id
+         WHERE s.client_id = %(cid)s AND s.status = ANY(%(worked)s)
+         ORDER BY s.business_date DESC, s.id DESC
+         LIMIT %(limit)s
+        """,
+        {"cid": client_id, "limit": limit, "worked": list(WORKED_STATUSES)},
+    )
+
+
+def client_totals(conn: psycopg.Connection, client_id: int) -> dict:
+    """Her whole history as three figures: how many visits, what they came to, and when she
+    started coming."""
+    return fetchone(
+        conn,
+        "SELECT COUNT(*) AS visits, "
+        "       COALESCE(SUM(services_total + products_total), 0) AS billed, "
+        "       MIN(business_date) AS first_visit "
+        "FROM sales WHERE client_id = %(cid)s AND status = ANY(%(worked)s)",
+        {"cid": client_id, "worked": list(WORKED_STATUSES)},
+    )
+
+
 def owners_with_a_channel(conn: psycopg.Connection) -> list[dict]:
     """Every active owner the assistant can actually message. Who is asked to close the register."""
     return fetchall(
