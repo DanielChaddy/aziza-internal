@@ -103,6 +103,19 @@ below follows from that one difference.
 - **Client names are matched exact-on-folded, never through the catalog's resolver.** Its overlap
   pass reads "Ana" out of "Mariana", and a fuzzy hit here attaches a real balance to the wrong
   person. That is why `clients.Client` carries no aliases.
+- **A number can be corrected, and any specialist may do it.** She is the one the client tells,
+  and requiring an owner means the old number simply stays. The correction moves nothing: the
+  client is the same row, with the same balance and the same history — only the way to reach her
+  changes, and the old number stops being hers rather than becoming a second one.
+- **A number another client of that name already holds refuses the change.** Two balances
+  becoming one is a merge, and nobody asked for one. Refused in the `UPDATE` itself rather than
+  by a check in the tool, because the constraint is the guarantee: without it the unique index
+  raises and the specialist is told to try again in a moment, forever.
+- **A client who gave no number can give one while her ticket is open, and only then.** She is
+  not findable by name, so the ticket she is standing at is the whole window. From then on she is
+  findable and can be fiada — the refusal was never about her, it was about nothing being able to
+  find her again. Once that ticket closes there is no way back to her, which is the cost of
+  serving her at all.
 
 **What the salon knows about a client, an OWNER can read, and nobody else.** `client_history`
 answers what one client has had done — every charged visit, at the price the ticket carried, with
