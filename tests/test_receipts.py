@@ -13,13 +13,18 @@ import pytest
 from aziza_adk.money import ZERO
 from aziza_adk.receipts import (
     GENDER_ASSUMED_TEXT,
+    NO_LAPSED_TEXT,
+    NO_OLD_BALANCE_TEXT,
+    NO_SALES_TEXT,
     WALK_IN_TEXT,
     Line,
     Payment,
     Visit,
     render_client_history,
     render_day,
+    render_lapsed_clients,
     render_receipt,
+    render_salon_clients,
     render_ticket,
     spanish_date,
 )
@@ -462,3 +467,70 @@ def test_the_number_is_shown_here_and_only_here():
 
 def test_a_client_with_no_number_is_reported_without_one():
     assert "Tel" not in _history(phone="")
+
+
+# --- [8] What the salon's clients look like ----------------------------------------------------
+
+_FROM, _TO = dt.date(2026, 6, 1), dt.date(2026, 8, 30)
+
+
+def _salon(**kw) -> str:
+    base = {
+        "most_visits": [("Carmen", 8), ("Rosa", 6)],
+        "most_spent": [("Carmen", Decimal("12400.00")), ("Rosa", Decimal("7150.00"))],
+        "most_sold": [("Manicura + pintura normal", 62, Decimal("18600.00"))],
+    }
+    return render_salon_clients(_FROM, _TO, **{**base, **kw})
+
+
+def test_the_three_rankings_are_labelled_apart():
+    """A visit count read as pesos is the one mistake this shape can make."""
+    out = _salon()
+    assert out.index("Las que más vienen:") < out.index("Las que más gastan:")
+    assert "• Carmen — 8 visitas" in out
+    assert "• Carmen — RD$12,400.00" in out
+    assert "• Manicura + pintura normal — 62 veces, RD$18,600.00" in out
+
+
+def test_the_window_it_actually_read_is_on_the_message():
+    """The days are a default the owner did not choose, so she is told which ones she got."""
+    assert "Del 1 de junio de 2026 al 30 de agosto de 2026." in _salon()
+
+
+def test_an_empty_window_says_so_rather_than_three_empty_headings():
+    out = _salon(most_visits=[], most_spent=[], most_sold=[])
+    assert NO_SALES_TEXT in out
+    assert "Las que más vienen" not in out
+
+
+def _lapsed(**kw) -> str:
+    base = {
+        "lapsed": [("Rosa", "809-555-0102", dt.date(2026, 6, 22), 9)],
+        "owing": [("Yudelka", "", Decimal("1200.00"), dt.date(2026, 4, 3))],
+    }
+    return render_lapsed_clients(60, **{**base, **kw})
+
+
+def test_a_lapsed_client_shows_when_she_last_came_and_how_often_she_did():
+    """ "Used to come" is shown rather than asserted."""
+    out = _lapsed()
+    assert "más de 60 días" in out
+    assert "• Rosa — última vez el 22 de junio de 2026, 9 visitas, tel 809-555-0102" in out
+
+
+def test_an_old_balance_is_its_own_list():
+    """Two different phone calls: one to book her, one to collect. A regular who owes belongs
+    only in the second."""
+    out = _lapsed()
+    assert "Con saldo viejo sin mover:" in out
+    assert "• Yudelka — RD$1,200.00, desde el 3 de abril de 2026" in out
+
+
+def test_each_empty_half_answers_on_its_own():
+    """An empty list under a heading reads as a report that failed."""
+    out = _lapsed(lapsed=[], owing=[])
+    assert NO_LAPSED_TEXT in out and NO_OLD_BALANCE_TEXT in out
+
+
+def test_a_client_with_no_number_is_listed_without_one():
+    assert ", tel " not in _lapsed(lapsed=[("Rosa", "", dt.date(2026, 6, 22), 9)], owing=[])

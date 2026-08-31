@@ -99,6 +99,7 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | which specialist a spoken name means | `staff.py`, and `tests/test_staff.py` |
 | which client a name and a number mean | `clients.py`, and `tests/test_clients.py` |
 | what one client has had done | `queries.client_visits`, `tools.client_history`, §3 |
+| who comes, who spends, who stopped | `tools.salon_clients`, `tools.lapsed_clients`, §3 |
 | what a client owes, and change | `queries.client_*`, `tools.record_payment`, §7 |
 | the register, and what it should hold | `queries.expected_register`, `tools.close_register`, §7 |
 | which price column a client reads | `names.py`, and `tests/test_names.py` |

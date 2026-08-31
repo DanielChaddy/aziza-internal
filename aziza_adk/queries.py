@@ -941,6 +941,106 @@ def client_totals(conn: psycopg.Connection, client_id: int) -> dict:
     )
 
 
+# --- what the salon's clients look like -------------------------------------
+
+
+def client_activity(conn: psycopg.Connection, start: dt.date, end: dt.date) -> list[dict]:
+    """Every client charged in the window, with how often she came and what she was billed.
+
+    ONE query for both rankings rather than two ordered ones: "comes most" and "spends most" are
+    two readings of the same rows, and two queries could disagree about a client. The top of each
+    is taken by the caller, over a list a salon can hold.
+
+    No child table is joined at all — both totals live on `sales`, one row per sale — so this one
+    is fan-out-proof by construction rather than by care.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT c.name, c.phone,
+               COUNT(*) AS visits,
+               SUM(s.services_total + s.products_total) AS spent
+          FROM sales s JOIN clients c ON c.id = s.client_id
+         WHERE s.status = ANY(%(worked)s) AND s.business_date BETWEEN %(start)s AND %(end)s
+         GROUP BY c.id, c.name, c.phone
+         ORDER BY c.name
+        """,
+        {"start": start, "end": end, "worked": list(WORKED_STATUSES)},
+    )
+
+
+def top_services(conn: psycopg.Connection, start: dt.date, end: dt.date, top: int) -> list[dict]:
+    """What the salon did most in the window, by how many times rather than how many tickets.
+
+    Grouped on `services.id` and labelled with the catalog's CURRENT name rather than the line's
+    snapshot. §4 freezes a name to protect a ticket already quoted, and this is not one — a
+    renamed service is still the same thing the salon does, and grouping on the snapshot would
+    split it in two the day somebody renames it.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT sv.name, SUM(l.quantity) AS times, SUM(l.line_total) AS billed
+          FROM sale_lines l
+          JOIN sales s     ON s.id = l.sale_id
+          JOIN services sv ON sv.id = l.service_id
+         WHERE s.status = ANY(%(worked)s) AND s.business_date BETWEEN %(start)s AND %(end)s
+         GROUP BY sv.id, sv.name
+         ORDER BY times DESC, billed DESC, sv.name
+         LIMIT %(top)s
+        """,
+        {"start": start, "end": end, "top": top, "worked": list(WORKED_STATUSES)},
+    )
+
+
+def lapsed_clients(
+    conn: psycopg.Connection, cutoff: dt.date, min_visits: int, top: int
+) -> list[dict]:
+    """Clients who USED TO come and no longer do, most recently lapsed first.
+
+    `min_visits` is what makes "used to" mean something: one visit is a walk-in who never became
+    a client, and reporting her as having stopped is noise that teaches people to skip the list.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT c.name, c.phone, x.visits, x.last_visit
+          FROM clients c
+          JOIN (SELECT client_id, COUNT(*) AS visits, MAX(business_date) AS last_visit
+                  FROM sales
+                 WHERE client_id IS NOT NULL AND status = ANY(%(worked)s)
+                 GROUP BY client_id) x ON x.client_id = c.id
+         WHERE x.visits >= %(min)s AND x.last_visit < %(cutoff)s
+         ORDER BY x.last_visit DESC, c.name
+         LIMIT %(top)s
+        """,
+        {"cutoff": cutoff, "min": min_visits, "top": top, "worked": list(WORKED_STATUSES)},
+    )
+
+
+def stale_balances(conn: psycopg.Connection, cutoff: dt.date, top: int) -> list[dict]:
+    """Who owes, where nothing has moved on it since `cutoff`. Oldest first.
+
+    The CASE is `client_balance`'s, character for character, so this report and the ticket's
+    DEUDA ANTERIOR can never disagree about what she owes.
+    """
+    return fetchall(
+        conn,
+        """
+        SELECT c.name, c.phone,
+               SUM(CASE WHEN l.kind = 'debt' THEN l.amount ELSE -l.amount END) AS balance,
+               MAX(l.business_date) AS last_move
+          FROM client_ledger l JOIN clients c ON c.id = l.client_id
+         GROUP BY c.id, c.name, c.phone
+        HAVING SUM(CASE WHEN l.kind = 'debt' THEN l.amount ELSE -l.amount END) > 0
+           AND MAX(l.business_date) < %(cutoff)s
+         ORDER BY MAX(l.business_date), c.name
+         LIMIT %(top)s
+        """,
+        {"cutoff": cutoff, "top": top},
+    )
+
+
 def owners_with_a_channel(conn: psycopg.Connection) -> list[dict]:
     """Every active owner the assistant can actually message. Who is asked to close the register."""
     return fetchall(

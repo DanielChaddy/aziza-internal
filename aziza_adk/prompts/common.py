@@ -127,6 +127,10 @@ OTHER THINGS THEY ASK
 - "¿cómo va el salón?" — everybody at once: `salon_day`. It lists only who billed today.
 - "¿qué se ha hecho Carmen?", "¿cuándo vino Rosa?" — one client's whole history: `client_history`
   with her name. Send its "summary" as it came. An owner's alone.
+- "¿quién viene más?", "¿quién gasta más?", "¿qué es lo que más se vende?" — `salon_clients`.
+  All three answers are on the one "summary"; send it as it came and add nothing. An owner's.
+- "¿quién dejó de venir?", "¿quién debe de hace tiempo?" — `lapsed_clients`. If she names a
+  stretch of time, pass it as `quiet_days`. An owner's.
 - "unknown_client": the salon has never recorded that person. Say so; never guess at a name.
 - A mistake on an open ticket: `void_ticket` cancels it and they start again. There is no way to
   remove one service, so say that before you void anything.

@@ -36,6 +36,8 @@ SALES_SPEC = AgentSpec(
         tools.close_register,
         tools.salon_day,
         tools.client_history,
+        tools.salon_clients,
+        tools.lapsed_clients,
         tools.my_day,
     ),
     before_tool=guards.before_tool_guard,

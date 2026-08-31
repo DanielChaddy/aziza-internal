@@ -1228,3 +1228,143 @@ def test_the_guard_knows_the_client_report_is_an_owners():
     set, so a tool MISSING from it is invisible to all of them — which is this tool's failure
     shape, not a hypothetical."""
     assert "client_history" in tools.OWNER_TOOL_NAMES
+
+
+# --- [16] Who comes, who spends, and who stopped ----------------------------------------------
+
+_C = "8495553333"
+_D = "8095554444"
+
+
+def _backdate(conn, client_folded: str, days_ago: int) -> None:
+    """Move every charged sale of that client back. The register tests already move a business
+    date this way; the sentinel cleanup cascades them off however the case ends."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE sales SET business_date = CURRENT_DATE - %(n)s * INTERVAL '1 day' "
+            "WHERE client_id = (SELECT id FROM clients WHERE folded = %(f)s)",
+            {"n": days_ago, "f": client_folded},
+        )
+
+
+def _sold(context, client: str, phone: str, service: str = "manicura normal") -> None:
+    tools.start_ticket(client, client_phone=phone, tool_context=context)
+    tools.add_service(service, 1, tool_context=context)
+    tools.record_payment("efectivo", "10000", "0", extra="vuelto", tool_context=context)
+
+
+def test_who_comes_most_counts_visits_and_who_spends_most_counts_pesos(working, owner):
+    """Two readings of the same rows, and a ranking that mixed them would be unreadable."""
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    _sold(context, "Ingrid", _A)
+    _sold(context, "Sonia", _C, "pedicura vip")
+
+    out = tools.salon_clients(tool_context=owner)["summary"]
+    visits = out[out.index("Las que más vienen:") : out.index("Las que más gastan:")]
+    spend = out[out.index("Las que más gastan:") : out.index("Lo que más se hace:")]
+    assert visits.index("Ingrid") < visits.index("Sonia"), "two visits beat one"
+    assert spend.index("Sonia") < spend.index("Ingrid"), "one bigger ticket beats two small ones"
+
+
+def test_what_sells_most_counts_a_quantity_of_two_as_two(working, owner):
+    """`SUM(quantity)`, not `COUNT(*)`: two pedicures on one ticket were sold twice."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.add_service("pedicura normal", 2, tool_context=context)
+    tools.record_payment("efectivo", "10000", "0", extra="vuelto", tool_context=context)
+    assert (
+        "Pedicura + pintura normal — 2 veces" in tools.salon_clients(tool_context=owner)["summary"]
+    )
+
+
+def test_a_sale_outside_the_window_is_absent(working, owner, conn):
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    _backdate(conn, "ingrid", 200)
+    out = tools.salon_clients(days=30, tool_context=owner)["summary"]
+    assert "Ingrid" not in out
+
+
+def test_a_nonsense_window_is_clamped_rather_than_refused(working, owner):
+    """A window is not money. A bad value should still answer, and the message says which window
+    it read — so a default the owner did not choose is visible."""
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    for days in (0, -5, 99999):
+        answer = tools.salon_clients(days=days, tool_context=owner)
+        assert "error" not in answer, days
+        assert "Del " in answer["summary"]
+
+
+def test_somebody_who_came_once_is_not_somebody_who_stopped_coming(working, owner, conn):
+    """One visit is a walk-in who never became a client, and reporting her as lapsed is the noise
+    that teaches people to skip the list."""
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    _backdate(conn, "ingrid", 120)
+    assert "Ingrid" not in tools.lapsed_clients(tool_context=owner)["summary"]
+
+
+def test_a_regular_who_stopped_is_reported_with_when_and_how_often(working, owner, conn):
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    _sold(context, "Ingrid", _A)
+    _backdate(conn, "ingrid", 120)
+    out = tools.lapsed_clients(tool_context=owner)["summary"]
+    assert "Ingrid" in out and "2 visitas" in out and "tel 809-555-1111" in out
+
+
+def test_a_client_seen_recently_is_not_lapsed(working, owner):
+    context, _ = working
+    _sold(context, "Ingrid", _A)
+    _sold(context, "Ingrid", _A)
+    assert "Ingrid" not in tools.lapsed_clients(tool_context=owner)["summary"]
+
+
+def test_an_old_balance_is_listed_even_when_she_still_comes(working, owner, conn):
+    """The halves are independent: a regular who owes is a collection problem, not a retention
+    one, and folding them into one list would hide her in it."""
+    context, _ = working
+    _billed(context, "Sonia", _C)
+    tools.close_ticket_with_debt(tool_context=context)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE client_ledger SET business_date = CURRENT_DATE - 200 * INTERVAL '1 day' "
+            "WHERE client_id = (SELECT id FROM clients WHERE folded = 'sonia')"
+        )
+    out = tools.lapsed_clients(tool_context=owner)["summary"]
+    owing = out[out.index("Con saldo viejo sin mover:") :]
+    assert "Sonia — RD$300.00" in owing
+
+
+def test_a_settled_balance_drops_off_the_list(working, owner, conn):
+    """The same expression `client_balance` uses, so the report and the ticket cannot disagree."""
+    context, _ = working
+    _billed(context, "Sonia", _C)
+    tools.close_ticket_with_debt(tool_context=context)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE client_ledger SET business_date = CURRENT_DATE - 200 * INTERVAL '1 day' "
+            "WHERE client_id = (SELECT id FROM clients WHERE folded = 'sonia')"
+        )
+    tools.settle_client_debt("Sonia", "300", "efectivo", client_phone=_C, tool_context=context)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE client_ledger SET business_date = CURRENT_DATE - 200 * INTERVAL '1 day' "
+            "WHERE client_id = (SELECT id FROM clients WHERE folded = 'sonia')"
+        )
+    assert "Sonia" not in tools.lapsed_clients(tool_context=owner)["summary"]
+
+
+def test_both_client_reports_are_an_owners_alone(working):
+    """The bodies refuse even though the guard already did."""
+    context, _ = working
+    assert tools.salon_clients(tool_context=context)["error"] == "owner_only"
+    assert tools.lapsed_clients(tool_context=context)["error"] == "owner_only"
+
+
+def test_the_guard_knows_both_client_reports_are_an_owners():
+    """Named as literals. Every owner-only test reads the set, so a tool missing from it is
+    invisible to all of them."""
+    assert {"salon_clients", "lapsed_clients"} <= tools.OWNER_TOOL_NAMES
