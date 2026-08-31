@@ -80,6 +80,7 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "record_payment",
         "close_ticket_with_debt",
         "settle_client_debt",
+        "set_client_phone",
         "buy_product",
         "settle_debt",
         "my_day",
@@ -196,6 +197,7 @@ ANOTHER_CLIENT_MSG = (
     "Ya tengo una clienta con ese nombre y otro teléfono. ¿Es otra clienta, o revisamos el número?"
 )
 UNKNOWN_CLIENT_MSG = "No tengo a esa clienta en el salón."
+PHONE_TAKEN_MSG = "Ese teléfono ya es de otra clienta con ese mismo nombre. Revísamelo y lo cambio."
 NO_CREDIT_WALK_IN_MSG = (
     "A esa clienta no le puedo fiar: no tengo su teléfono para buscarla en la próxima visita."
 )
@@ -953,6 +955,66 @@ def close_ticket_with_debt(on_behalf_of: str = "", tool_context: ToolContext = N
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
+
+
+def set_client_phone(
+    phone: str,
+    client: str = "",
+    client_phone: str = "",
+    on_behalf_of: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Change the number the salon has for a client, or give one to a client who arrived without.
+
+    Naming nobody means the client on the open ticket, which is the only way to reach one who
+    gave no number: she is not findable by name, deliberately (§3). Giving her one makes her
+    findable from then on, and fiable.
+
+    Args:
+        phone: Her number now, in her own words.
+        client: Her name. Leave empty for the client on the open ticket.
+        client_phone: The number the salon has for her TODAY, only when two clients share her
+            name and you were asked which.
+        on_behalf_of: ONLY for an owner, and then it is REQUIRED.
+
+    Returns:
+        {"changed": true, "client": str} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    key, refused = _phone(phone)
+    if refused is not None:
+        return refused
+    if not key:
+        return {"error": "bad_phone", "message": BAD_PHONE_MSG}
+    current, refused = _phone(client_phone)
+    if refused is not None:
+        return refused
+    named = (client or "").strip()
+    try:
+        with queries.connect() as conn:
+            person, refused = _acting(conn, tool_context, on_behalf_of)
+            if refused is not None:
+                return refused
+            if named:
+                picked = clients.pick(clients.roster(queries.clients_named(conn, named)), current)
+                if picked.candidates:
+                    return {"error": "ambiguous_client", "message": AMBIGUOUS_CLIENT_MSG}
+                if picked.match is None:
+                    return {"error": "unknown_client", "message": UNKNOWN_CLIENT_MSG}
+                client_id, name = picked.match.client_id, picked.match.name
+            else:
+                sale = queries.open_sale(conn, person.specialist_id)
+                if sale is None:
+                    return {"error": "no_open_ticket", "message": NO_TICKET_MSG}
+                client_id, name = sale["client_id"], sale["client_name"]
+            # A number already on another row of that name is a MERGE, and two balances becoming
+            # one is not a correction. Refused rather than resolved: nobody asked for it.
+            if not queries.set_client_phone(conn, client_id, key):
+                return {"error": "phone_taken", "message": PHONE_TAKEN_MSG}
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+    return {"changed": True, "client": name}
 
 
 def settle_client_debt(

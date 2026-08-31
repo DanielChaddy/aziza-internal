@@ -1368,3 +1368,133 @@ def test_the_guard_knows_both_client_reports_are_an_owners():
     """Named as literals. Every owner-only test reads the set, so a tool missing from it is
     invisible to all of them."""
     assert {"salon_clients", "lapsed_clients"} <= tools.OWNER_TOOL_NAMES
+
+
+# --- [17] When her number changes --------------------------------------------------------------
+# The number is half an identity, so changing it is the one write that says somebody is somebody
+# else. What it must never do is move a balance.
+
+_NEW = "8095559999"
+
+
+def test_her_number_changes_and_the_new_one_finds_her(working):
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    assert tools.set_client_phone(_NEW, tool_context=context)["changed"]
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Ingrid", client_phone=_NEW, tool_context=context)["opened"]
+
+
+def test_the_old_number_stops_being_hers(working):
+    """A correction that left the old one working would be an addition, and the salon would have
+    two ways to reach one woman and no way to tell which is current."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.set_client_phone(_NEW, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    answer = tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    assert answer["error"] == "another_client_with_that_name"
+
+
+def test_what_she_owes_follows_her_and_not_the_number(working):
+    """THE property. She is the same woman: same row, same balance, same history."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    assert tools.set_client_phone(_NEW, tool_context=context)["changed"]
+    tools.void_ticket(tool_context=context)
+
+    assert tools.start_ticket("Ingrid", tool_context=context)["owed_from_before"] == "RD$300.00"
+
+
+def test_a_client_of_that_name_who_holds_it_already_refuses_the_change(working):
+    """Two balances becoming one is a merge, and nobody asked for one."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    assert tools.set_client_phone(_A, tool_context=context)["error"] == "phone_taken"
+
+
+def test_a_number_the_salon_cannot_read_changes_nothing(working):
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    assert tools.set_client_phone("80955", tool_context=context)["error"] == "bad_phone"
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)["opened"]
+
+
+def test_naming_nobody_with_no_open_ticket_is_refused(working):
+    context, _ = working
+    assert tools.set_client_phone(_NEW, tool_context=context)["error"] == "no_open_ticket"
+
+
+def test_a_name_two_clients_answer_to_asks_which(working):
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    answer = tools.set_client_phone(_NEW, client="Ingrid", tool_context=context)
+    assert answer["error"] == "ambiguous_client"
+
+
+def test_the_current_number_says_which_of_them_changed(working):
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.set_client_phone(_NEW, client="Ingrid", client_phone=_B, tool_context=context)[
+        "changed"
+    ]
+    assert tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)["opened"]
+
+
+# --- [18] A client of passage who changes her mind ---------------------------------------------
+# Her open ticket is the only way to reach her: she is not findable by name, deliberately. So the
+# ticket she is standing at is the whole window, and it closes when it closes.
+
+
+def test_she_can_give_a_number_while_her_ticket_is_open(working):
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    assert tools.set_client_phone(_A, tool_context=context)["changed"]
+
+
+def test_the_ticket_stops_calling_her_de_paso(working):
+    """Read on every render rather than carried from the open, so it lands at once — and she is
+    charged in front of somebody who can now fiarle."""
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    tools.set_client_phone(_A, tool_context=context)
+    ticket = tools.show_ticket(tool_context=context)["ticket"]
+    assert "de paso" not in ticket and "Sin teléfono" not in ticket
+
+
+def test_she_can_be_fiada_from_then_on(working):
+    """The refusal was never about her: it was about nothing being able to find her again."""
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    tools.set_client_phone(_A, tool_context=context)
+    assert tools.close_ticket_with_debt(tool_context=context)["owes"] == "RD$300.00"
+
+
+def test_she_is_findable_by_name_from_then_on(working):
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    tools.set_client_phone(_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Ingrid", tool_context=context)["opened"]
+
+
+def test_once_the_ticket_closes_there_is_no_way_back_to_her(working):
+    """Said plainly rather than discovered: the window is the ticket, and a name cannot reopen
+    it. That is the cost of serving her at all, and it is the honest one."""
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    tools.record_payment("efectivo", "300", "0", tool_context=context)
+    assert tools.set_client_phone(_A, client="Ingrid", tool_context=context)["error"] == (
+        "unknown_client"
+    )

@@ -747,6 +747,26 @@ def clients_named(conn: psycopg.Connection, name: str) -> list[dict]:
     )
 
 
+def set_client_phone(conn: psycopg.Connection, client_id: int, phone: str) -> bool:
+    """Give this client that number. False when another client of the same name already holds it.
+
+    `ON CONFLICT DO NOTHING` on the pair rather than a look-then-write: the constraint is the
+    guarantee and a check in the tool is not, and the answer wanted here is exactly whether the
+    row moved.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE clients SET phone = %(phone)s WHERE id = %(cid)s "
+            "  AND NOT EXISTS (SELECT 1 FROM clients other "
+            "                   WHERE other.folded = clients.folded AND other.phone = %(phone)s "
+            "                     AND other.id <> clients.id)",
+            {"cid": client_id, "phone": phone},
+        )
+        moved = cur.rowcount == 1
+    conn.commit()
+    return moved
+
+
 def client_has_phone(conn: psycopg.Connection, client_id: int) -> bool:
     """Whether the salon can find this client again. What credit turns on (§3)."""
     row = fetchone(
