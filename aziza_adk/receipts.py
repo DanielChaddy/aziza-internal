@@ -26,6 +26,10 @@ METHOD_LABELS = {"cash": "Efectivo", "banreservas": "Banreservas", "bhd": "BHD"}
 #: figure, and a label there is noise.
 GENDER_LABELS = {"female": "femenino", "male": "masculino"}
 
+#: Said on the ticket of a client who gave no number. She is charged like anybody else; what she
+#: cannot be is fiada, because nothing would find her on a next visit that has no name to it.
+WALK_IN_TEXT = "Sin teléfono: cóbrale completo hoy, que no la podemos buscar después."
+
 #: Said only when the name was not recognized and the female column was applied anyway
 #: (aziza_adk/names.py). A matched name gets no notice: it is not an assumption.
 GENDER_ASSUMED_TEXT = (
@@ -85,6 +89,7 @@ def render_ticket(
     assumed: bool = False,
     worked_by: str | None = None,
     owed_from_before: Decimal = ZERO,
+    walk_in: bool = False,
 ) -> str:
     """The open ticket: who it is for, what was done, what was sold, and what it comes to.
 
@@ -98,8 +103,11 @@ def render_ticket(
 
     `owed_from_before` sits BESIDE the total and never inside it: it is not this sale's money, and
     `settle_client_debt` is what collects it — §7.
+
+    `walk_in` is a client who gave no number, so nothing can find her again. Said here rather
+    than only at the refusal, which would arrive with the client already walking out — §3.
     """
-    rows = [f"Cuenta de {client_name}"]
+    rows = [f"Cuenta de {client_name}" + (" (de paso)" if walk_in else "")]
     if worked_by:
         rows.append(f"Trabajo de: {worked_by}")
     if gender_label:
@@ -110,6 +118,8 @@ def render_ticket(
     rows += ["", f"Total: {rd(total + products_total)}"]
     if owed_from_before > ZERO:
         rows += ["", f"DEUDA ANTERIOR: {rd(owed_from_before)} (aparte de este total)"]
+    if walk_in:
+        rows += ["", WALK_IN_TEXT]
     if assumed and gender_label:
         rows += ["", GENDER_ASSUMED_TEXT]
     return "\n".join(rows)

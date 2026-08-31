@@ -380,7 +380,7 @@ def test_nothing_is_said_where_the_client_cannot_change_a_figure(working):
 
 def test_the_specialist_saying_so_beats_the_name(working):
     context, _ = working
-    tools.start_ticket("Laura", "hombre", tool_context=context)
+    tools.start_ticket("Laura", client_gender="hombre", tool_context=context)
     assert tools.add_service("manicura normal", 1, tool_context=context)["total"] == "RD$400.00"
 
 
@@ -934,3 +934,181 @@ def test_only_an_owner_reaches_the_register(working):
     context, _ = working
     assert tools.close_register("0", "0", "0", tool_context=context)["error"] == "owner_only"
     assert tools.salon_day(tool_context=context)["error"] == "owner_only"
+
+
+# --- [12] Which client she is ---------------------------------------------------------------
+# Two people called María were one row, one balance and one history. The number is the half of
+# an identity the salon can actually ask for, and these hold what it buys.
+
+_A = "8095551111"
+_B = "8295552222"
+
+
+def _billed(context, client: str, phone: str = "", **kw) -> dict:
+    """Open a ticket for `client` and put one service on it. Answers the ticket call."""
+    opened = tools.start_ticket(client, client_phone=phone, tool_context=context, **kw)
+    if "error" in opened:
+        return opened
+    return tools.add_service("manicura normal", 1, tool_context=context)
+
+
+def test_a_client_the_salon_does_not_know_needs_a_number(working):
+    """Registering her under a name alone is what put two people on one balance."""
+    context, _ = working
+    answer = tools.start_ticket("Ingrid", tool_context=context)
+    assert answer["error"] == "client_phone_required"
+
+
+def test_the_number_on_the_second_call_opens_the_ticket(working, conn):
+    """The question is answered by the re-call, like an ambiguous specialist. Nothing is held
+    between the turns and `session.py` keeps its two facts."""
+    context, _ = working
+    tools.start_ticket("Ingrid", tool_context=context)
+    assert tools.start_ticket("Ingrid", client_phone="809-555-1111", tool_context=context)["opened"]
+    row = queries.fetchone(conn, "SELECT phone FROM clients WHERE folded = 'ingrid'")
+    assert row["phone"] == _A, "stored as digits, however she wrote it"
+
+
+def test_a_client_the_salon_knows_is_never_asked_again(working):
+    """ "Always" is about a client it does not know. Asking a regular every visit is how a rule
+    stops being obeyed."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Ingrid", tool_context=context)["opened"]
+
+
+def test_two_clients_who_share_a_name_keep_separate_balances(working):
+    """THE property. One leaves owing; the other is not told about a debt that is not hers."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+
+    second = tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    assert second["opened"]
+    assert "owed_from_before" not in second
+    ticket = tools.add_service("manicura normal", 1, tool_context=context)["ticket"]
+    assert "DEUDA ANTERIOR" not in ticket
+
+
+def test_the_first_of_them_still_owes_it(working):
+    """The other half: separating them must not lose the debt it separated."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+
+    hers = tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    assert hers["owed_from_before"] == "RD$300.00"
+
+
+def test_a_second_client_of_that_name_is_confirmed_rather_than_assumed(working):
+    """A mistyped digit and a different person are the same input, so a person is asked. The cost
+    is one visible extra row instead of a silently merged balance."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    answer = tools.start_ticket("Ingrid", client_phone=_B, tool_context=context)
+    assert answer["error"] == "another_client_with_that_name"
+
+
+def test_the_same_name_and_number_is_one_client(working, conn):
+    """Two rows for one person would be two balances for one person."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone="1-809-555-1111", tool_context=context)
+    row = queries.fetchone(conn, "SELECT COUNT(*) AS n FROM clients WHERE folded = 'ingrid'")
+    assert row["n"] == 1
+
+
+def test_a_mother_and_daughter_on_one_number_are_two_clients(working, conn):
+    """The pair is the identity, and a shared phone is ordinary."""
+    context, _ = working
+    tools.start_ticket("Ingrid", client_phone=_A, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Sonia", client_phone=_A, tool_context=context)["opened"]
+
+
+def test_a_number_the_salon_cannot_read_writes_nothing(working, conn):
+    """And does NOT fall through to matching on the name alone, which is how a typo opens a
+    ticket on the wrong woman."""
+    context, _ = working
+    answer = tools.start_ticket("Ingrid", client_phone="80955511", tool_context=context)
+    assert answer["error"] == "bad_phone"
+    row = queries.fetchone(conn, "SELECT COUNT(*) AS n FROM clients WHERE folded = 'ingrid'")
+    assert row["n"] == 0
+
+
+# --- [13] A client who gave no number ---------------------------------------------------------
+# She is charged and her work counts. What she cannot be is fiada: her row is never matched by
+# name again, so a balance on it is one nothing could ever collect.
+
+
+def test_she_can_still_be_served(working):
+    """Refusing the ticket would cost the specialist the commission on work she actually did."""
+    context, _ = working
+    assert tools.start_ticket("Ingrid", walk_in=True, tool_context=context)["opened"]
+
+
+def test_the_ticket_says_so_before_anybody_tries_to_fiarle(working):
+    """Sprung at the close, the refusal arrives with the client already walking out."""
+    context, _ = working
+    ticket = _billed(context, "Ingrid", walk_in=True)["ticket"]
+    assert "(de paso)" in ticket
+    assert "Sin teléfono" in ticket
+
+
+def test_she_cannot_leave_owing(working):
+    """A debt on a row nothing can find again is uncollectable by construction."""
+    context, _ = working
+    _billed(context, "Ingrid", walk_in=True)
+    assert tools.close_ticket_with_debt(tool_context=context)["error"] == "no_credit_walk_in"
+
+
+def test_she_is_never_found_by_name_again(working):
+    """`clients_named` filters her out, which is the whole mechanism — the truth about what the
+    salon knows rather than a limitation of the query."""
+    context, _ = working
+    tools.start_ticket("Ingrid", walk_in=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+    assert tools.start_ticket("Ingrid", tool_context=context)["error"] == "client_phone_required"
+
+
+# --- [14] Settling for a client who shares a name ---------------------------------------------
+
+
+def test_settling_for_a_shared_name_is_refused_rather_than_applied(working):
+    """NOT the one who happens to owe. It looks like the only reading that does anything, and it
+    credits money to a woman who may not have handed it over."""
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+
+    answer = tools.settle_client_debt("Ingrid", "100", "efectivo", tool_context=context)
+    assert answer["error"] == "ambiguous_client"
+
+
+def test_the_number_settles_the_right_ones_balance(working):
+    context, _ = working
+    _billed(context, "Ingrid", _A)
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.start_ticket("Ingrid", client_phone=_B, is_new_client=True, tool_context=context)
+    tools.void_ticket(tool_context=context)
+
+    answer = tools.settle_client_debt(
+        "Ingrid", "300", "efectivo", client_phone=_A, tool_context=context
+    )
+    assert answer["still_owes"] == "RD$0.00"
+
+
+def test_settling_never_registers_anybody(working, conn):
+    """Answering a typo with a new client is how money lands on a person the salon never saw."""
+    context, _ = working
+    answer = tools.settle_client_debt("Ingrid", "100", "efectivo", tool_context=context)
+    assert answer["error"] == "unknown_client"
+    row = queries.fetchone(conn, "SELECT COUNT(*) AS n FROM clients WHERE folded = 'ingrid'")
+    assert row["n"] == 0

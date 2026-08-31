@@ -12,6 +12,7 @@ import pytest
 
 from aziza_adk.receipts import (
     GENDER_ASSUMED_TEXT,
+    WALK_IN_TEXT,
     Line,
     Payment,
     render_day,
@@ -72,6 +73,19 @@ def test_what_she_owed_before_is_beside_the_total_and_not_in_it():
 def test_a_client_who_owes_nothing_gets_no_line_about_it():
     """A zero there reads as a debt of zero, which is a thing to ask about."""
     assert "DEUDA" not in render_ticket("Laura", [MANI], Decimal("800.00"))
+
+
+def test_a_client_who_gave_no_number_is_marked_where_the_charge_is_read():
+    """She is served like anybody else and cannot be fiada. Said at the close instead, the
+    refusal would arrive with the client already walking out."""
+    out = render_ticket("Laura", [MANI], Decimal("800.00"), walk_in=True)
+    assert "Cuenta de Laura (de paso)" in out
+    assert WALK_IN_TEXT in out
+    assert "Total: RD$800.00" in out, "she is charged the same"
+
+
+def test_a_client_the_salon_can_find_gets_no_such_notice():
+    assert "de paso" not in render_ticket("Laura", [MANI], Decimal("800.00"))
 
 
 # --- [2] The receipt ----------------------------------------------------------------------

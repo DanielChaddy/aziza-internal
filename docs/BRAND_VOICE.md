@@ -54,5 +54,7 @@ Name it correctly or it is not checked.
 
 ## §7 · The client's name is the only thing said about her
 
-She is *"la clienta"*, or the name the specialist gave. Nothing else about her is stored, said or
-asked for.
+She is *"la clienta"*, or the name the specialist gave. Her telephone is the one other thing
+stored, and it is stored to tell two of them apart rather than to reach her — asked for once when
+the salon does not know her, and never said back, never quoted in a message, never on a ticket.
+Nothing else about her is stored, said or asked for.

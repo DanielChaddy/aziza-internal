@@ -27,8 +27,13 @@ An owner does all of the above against a named specialist as well as herself, an
 read that specialist's day.
 
 Out of scope, and the assistant says so rather than improvising: appointments, changing a price,
-discounts, another specialist's figures **when the sender is not an owner**, anything
-about a client beyond her name and which of the salon's two price columns she reads.
+discounts, another specialist's figures **when the sender is not an owner**, anything about a
+client beyond her name, her telephone and which of the salon's two price columns she reads.
+
+The telephone is in scope because it is an IDENTITY rather than a contact detail: without it two
+people called María were one row, one balance and one history, and no report about a client could
+be trusted to be about one woman. It is asked for once, never repeated back and never shown on
+anything a specialist reads.
 
 ## §3 · Identity, and why it is not a conversation
 
@@ -71,6 +76,33 @@ together:
   `recorded_by` is who typed it, always set and never NULL, so the audit trail cannot be confused
   with a lost one. The ticket names whose work it is whenever somebody else entered it — the same
   reasoning as naming the client, applied to the other thing that could be wrong.
+
+**A CLIENT's identity is a different kind of thing, and the section title stops applying to it.**
+A specialist's is a credential the edge matches before the model runs, and it is never a value
+anybody types. A client's is a datum a specialist types, so it IS a conversation — and everything
+below follows from that one difference.
+
+- **The identity is the pair: her name folded, and her telephone.** Neither half works alone. A
+  name alone made two people called María one row, one balance and one history. A number alone
+  would make a mother and her daughter one client, and they share a phone as a matter of course.
+- **A client the salon does not know is asked for her number, once.** A client it already knows by
+  name is never asked again, and a name two clients answer to is a question rather than a pick:
+  charging the first of two Marías is how one of them pays the other's balance. `clients.py`
+  holds the shape and the choice, and reaches no database.
+- **A number is refused rather than repaired.** Ten digits after `conversation_core`'s fold, or
+  nothing. A digit short is a typo, and a typo resolved to whoever it happens to match is a
+  stranger's balance. It never falls through to matching on the name alone.
+- **A second client of a name already known is CONFIRMED rather than assumed.** A mistyped digit
+  and a different person are the same input, so a person decides, with the client in front of
+  her. The cost is one visible extra row instead of a silently merged balance.
+- **A client who gives no number is served and cannot be fiada.** Her row is never matched by name
+  again — `queries.clients_named` filters her out, which is the truth about what the salon knows
+  rather than a limitation of the query. So she is charged, her work counts and the commission is
+  paid; a balance on her would be one nothing could ever collect. The ticket says so where the
+  charge is read, because sprung at the close the refusal arrives as the client is walking out.
+- **Client names are matched exact-on-folded, never through the catalog's resolver.** Its overlap
+  pass reads "Ana" out of "Mariana", and a fuzzy hit here attaches a real balance to the wrong
+  person. That is why `clients.Client` carries no aliases.
 
 ## §4 · The ticket
 
@@ -201,9 +233,8 @@ person rather than the words on the ticket, and it is on **every** render of the
 her name — beside the total and never inside it, because it is not that sale's money and
 `settle_client_debt` is what collects it. Every render rather than the open alone: whoever charges
 is not always whoever opened the ticket, and a balance announced once has stopped being visible by
-the time anybody could ask for it. `clients` is
-matched on the folded name, so two people who share one share a balance until something asks for
-a phone; the column is there and the ambiguity is written down rather than discovered.
+the time anybody could ask for it. Which client
+she is, and how the salon tells two of them apart, is §3.
 
 **A `partial` sale is the specialist's work in full and pays her commission in full.** What she
 earns is measured by what she did, not by what the salon managed to collect — chasing the balance
