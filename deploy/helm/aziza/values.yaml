@@ -13,7 +13,7 @@
 
 image:
   repository: ghcr.io/danielchaddy/aziza-internal
-  # No default tag on purpose: `helm upgrade --set image.tag=$(git rev-parse --short HEAD)`.
+  # No default tag on purpose: `helm upgrade --set-string image.tag=$(git rev-parse --short HEAD)`.
   # An empty tag fails the render (see _helpers.tpl) rather than resolving to :latest.
   tag: ""
   pullPolicy: IfNotPresent

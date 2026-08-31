@@ -176,7 +176,7 @@ jobs:
           set -euo pipefail
           helm --kube-context "$KUBE_CONTEXT" -n "$NAMESPACE" \
             upgrade --install "$RELEASE" deploy/helm/aziza \
-            --set image.tag=${{ steps.sha.outputs.short }} \
+            --set-string image.tag=${{ steps.sha.outputs.short }} \
             --atomic --timeout 10m
 
       - name: What is running

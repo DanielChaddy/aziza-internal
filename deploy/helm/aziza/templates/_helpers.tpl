@@ -23,12 +23,16 @@ app.kubernetes.io/component: webhook
 {{- end -}}
 
 {{/*
-Image reference. Fails the render when image.tag is empty rather than resolving to :latest —
-an untagged image makes `helm rollback` meaningless, because revision N would not pin an artifact.
+Image reference. Fails the render on a tag that is empty or not a string, rather than emitting a
+reference nothing can pull — an untagged image makes `helm rollback` meaningless, and a coerced one
+names a tag no registry holds.
 */}}
 {{- define "aziza.image" -}}
 {{- if not .Values.image.tag -}}
-{{- fail "image.tag is required — pass --set image.tag=$(git rev-parse --short HEAD). An untagged image makes helm rollback meaningless." -}}
+{{- fail "image.tag is required — pass --set-string image.tag=$(git rev-parse --short HEAD). An untagged image makes helm rollback meaningless." -}}
+{{- end -}}
+{{- if not (kindIs "string" .Values.image.tag) -}}
+{{- fail "image.tag must be a string — pass --set-string, not --set. A short SHA that is all digits is coerced to a number, and printf renders it as %!s(int64=…) instead of a tag." -}}
 {{- end -}}
 {{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
 {{- end -}}

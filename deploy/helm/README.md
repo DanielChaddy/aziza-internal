@@ -87,7 +87,7 @@ By hand, which is also how a rollback is driven:
 
 ```bash
 helm -n z-aziza upgrade --install aziza deploy/helm/aziza \
-  --set image.tag=$(git rev-parse --short HEAD) --atomic --wait --timeout 10m
+  --set-string image.tag=$(git rev-parse --short HEAD) --atomic --wait --timeout 10m
 
 helm -n z-aziza history aziza
 helm -n z-aziza rollback aziza <revision>
@@ -100,7 +100,7 @@ on for one run to create the schema:
 
 ```bash
 helm -n z-aziza upgrade --install aziza deploy/helm/aziza \
-  --set image.tag=$(git rev-parse --short HEAD) --set dbBuild.enabled=true --wait
+  --set-string image.tag=$(git rev-parse --short HEAD) --set dbBuild.enabled=true --wait
 ```
 
 **It loads the salon's real catalog and its real people.** `scripts/seed_catalog.py` applies
