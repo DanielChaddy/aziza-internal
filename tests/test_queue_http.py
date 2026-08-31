@@ -223,6 +223,35 @@ def test_scanning_again_keeps_the_place_she_already_had(open_salon, client, sent
     assert "Ya estabas en la fila" in again.text
 
 
+def test_two_scans_in_one_instant_cannot_each_write_an_arrival(open_salon, client, sentinel, conn):
+    """The reuse above is a read-then-write, so it holds only while the two are serialized — and a
+    double-tapped form is two requests at this entry, which has no turn lock in front of it.
+
+    Asserted by holding the lock the write takes and giving the writer a deadline: with the
+    serialization gone the writer does not wait at all and this goes red, which is what makes it a
+    gate rather than a description.
+    """
+    import psycopg
+
+    from aziza_adk import queries
+
+    carmen = queries.clients_on_phone(conn, KNOWN_CLIENTS["Carmen"])[0]["id"]
+    day = tools.now().date()
+    holder, writer = queries.connect(), queries.connect()
+    try:
+        with holder.cursor() as cur:
+            # The PAIR is the contract. A lock keyed on anything else serializes the wrong thing.
+            cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (carmen, day.toordinal()))
+        with writer.cursor() as cur:
+            cur.execute("SET lock_timeout = '500ms'")
+        with pytest.raises(psycopg.errors.LockNotAvailable):
+            queries.record_arrival(writer, carmen, day, ("nails",))
+    finally:
+        for connection in (writer, holder):
+            connection.rollback()
+            connection.close()
+
+
 def test_two_clients_on_one_number_are_asked_which_she_is(open_salon, client, sentinel, conn):
     """A number reaches a mother and her daughter, and the pair is the identity (§3). Offered
     rather than typed, because the half she is missing is a name the salon already holds."""

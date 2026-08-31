@@ -1181,9 +1181,14 @@ def record_arrival(
     A want already being served is left alone: reopening it would yank her out of a chair.
     """
     with conn.cursor() as cur:
-        # TODO: read-then-write. Two joins for one client in the same instant both find no live
-        # arrival and both insert, which no constraint here refuses — see the comment on
-        # `arrivals` for why (client_id, business_date) is not unique.
+        # The read below decides whether to insert, so it is serialized per client per day: two
+        # joins in the same instant would otherwise both find no live arrival and both insert, and
+        # no constraint refuses that (`db/schema.sql`, on `arrivals`). An advisory lock rather than
+        # the client row, which an FK insert elsewhere already locks in the other order.
+        cur.execute(
+            "SELECT pg_advisory_xact_lock(%(cid)s, %(daykey)s)",
+            {"cid": client_id, "daykey": business_date.toordinal()},
+        )
         cur.execute(
             "SELECT a.id, a.arrival_ref, a.arrived_at FROM arrivals a "
             "WHERE a.client_id = %(cid)s AND a.business_date = %(day)s "
