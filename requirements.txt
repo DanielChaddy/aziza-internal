@@ -20,6 +20,7 @@ agent-adk @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-
 agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-telemetry-v0.1.0#subdirectory=packages/agent-telemetry
 agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-evalkit-v0.1.0#subdirectory=packages/agent-evalkit
 agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-transcription-v0.2.0#subdirectory=packages/transcription
+agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-webview-v0.1.0#subdirectory=packages/webview
 
 # The framework, with the [db] extra that pulls SQLAlchemy for DatabaseSessionService.
 google-adk[db]==2.3.0
@@ -34,9 +35,16 @@ psycopg[binary]==3.2.3
 # x86_64, amd64, AMD64 and win32, and macOS on an M-series reports `arm64`.
 greenlet==3.5.5
 
-# Web layer: the Telegram webhook mounted by `channel-telegram`.
+# Web layer: the Telegram webhook mounted by `channel-telegram`, and the two pages `queue_http`
+# and `mini_app` mount beside it.
 fastapi==0.139.0
 uvicorn==0.49.0
+
+# The code a client scans. Pure Python with no dependencies of its own and it writes nothing to
+# disk, so it runs under `readOnlyRootFilesystem: true` and the rendered symbol is a value the
+# deterministic gate asserts. Pinned EXACTLY: tests/test_qr.py holds a digest of its output, and
+# a floating pin would move that digest without a commit here.
+segno==1.6.6
 
 # Outbound HTTP client for the Bot API. Resolved transitively by google-genai; pinned here as the
 # direct dependency it is.

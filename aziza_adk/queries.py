@@ -1193,7 +1193,8 @@ def record_arrival(
             {"cid": client_id, "day": business_date},
         )
         arrival = cur.fetchone()
-        if arrival is None:
+        created = arrival is None
+        if created:
             cur.execute(
                 "INSERT INTO arrivals (arrival_ref, client_id, business_date) "
                 "VALUES (gen_random_uuid()::text, %(cid)s, %(day)s) "
@@ -1210,7 +1211,9 @@ def record_arrival(
             {"aid": arrival["id"], "codes": list(disciplines)},
         )
     conn.commit()
-    return arrival
+    # `created` is False when she was already standing in this line, which is the difference
+    # between "you are in" and "you were already in, and you kept your place" (§13).
+    return {**arrival, "created": created}
 
 
 def line_today(conn: psycopg.Connection, business_date: dt.date) -> list[dict]:

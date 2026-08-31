@@ -72,4 +72,10 @@ env:
       secretKeyRef:
         name: {{ .Values.existingSecret }}
         key: ADK_SESSION_DB_URL
+  # DERIVED from ingress.host rather than restated in `config`: the code a client scans has to
+  # resolve to this Ingress, and two spellings of one hostname is how a QR points at nothing.
+  # An explicit `env` entry because `configmap-env.yaml` ranges over a plain map and Helm does
+  # not re-render values as templates — the same string in values.yaml would render literally.
+  - name: JOIN_BASE_URL
+    value: {{ printf "https://%s" .Values.ingress.host | quote }}
 {{- end -}}

@@ -35,6 +35,10 @@ and `bhd` is warm-*tú* to a customer, which is not the same as brisk-*tú* to a
 A specialist-facing constant is named `*_MSG` or `*_TEXT`. That convention is not cosmetic:
 `tests/test_voice.py` discovers strings by it, so one added outside it is ungated.
 
+**A CLIENT-facing constant is named `*_CLIENT_COPY` and lives in `queue_text.py`.** She is the one
+audience this repository has that is not a colleague — `docs/BRAND_VOICE.md` §8 — and the suffix is
+what keeps the two sweeps apart. A client string named `*_MSG` is gated against the wrong register.
+
 ## Commands
 
 ```bash
@@ -99,6 +103,10 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | which specialist a spoken name means | `staff.py`, and `tests/test_staff.py` |
 | which client a name and a number mean | `clients.py`, and `tests/test_clients.py` |
 | who is waiting, and who is next | `arrivals.py`, and `tests/test_arrivals.py` |
+| the code a client scans | `join.py` and `qr.py`, and `tests/test_join.py`, `tests/test_qr.py` |
+| what a CLIENT reads | `queue_text.py` (`*_CLIENT_COPY`), against `docs/BRAND_VOICE.md` §8 |
+| the page she fills in | `queue_pages.py` and `queue_form.py`, `queue_http.py` for the routes |
+| whether a mini-app launch is real | `init_data.py`, and `tests/test_init_data.py` |
 | what one client has had done | `queries.client_visits`, `tools.client_history`, §3 |
 | who comes, who spends, who stopped | `tools.salon_clients`, `tools.lapsed_clients`, §3 |
 | what a client owes, and change | `queries.client_*`, `tools.record_payment`, §7 |
@@ -107,7 +115,8 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | how a reply sounds | `prompts/common.py`, against `docs/BRAND_VOICE.md` |
 
 `money.py`, `catalog.py`, `names.py`, `staff.py`, `clients.py`, `arrivals.py`, `receipts.py`,
-`hours.py`, `pay.py`, `catalog_data.py`, `staff_data.py` and `demo_data.py` reach no database and no model,
+`hours.py`, `pay.py`, `join.py`, `qr.py`, `queue_form.py`, `queue_pages.py`, `init_data.py`,
+`catalog_data.py`, `staff_data.py` and `demo_data.py` reach no database and no model,
 and that is load-bearing rather than tidy: the commission arithmetic, the split-payment balance,
 the price column a name selects, which of two Marías a number means and the rendered template are
 the behaviours that must be assertable, and an assertion that reaches a database is one the gate

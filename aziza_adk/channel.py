@@ -27,7 +27,7 @@ from channel_telegram.webhook import create_app
 from google.adk.events import Event, EventActions
 from google.genai import types
 
-from aziza_adk import config, queries, runtime, session, tools
+from aziza_adk import config, mini_app, queries, queue_http, runtime, session, tools
 
 logger = logging.getLogger("aziza_adk.telegram")
 
@@ -237,4 +237,11 @@ app = create_app(
     # success while the specialist sits in silence.
     on_turn_end=telemetry.turn_observer,
 )
+# The client's join page rides on THIS app rather than a second workload. A separate one would
+# need the bot token too (the mini app verifies Telegram's initData with a key derived from it), so
+# splitting would put the credential in two pods instead of one — the opposite of what the split is
+# for. It also inherits the httpx silencing above, which a second process would need a copy of.
+app.include_router(queue_http.create_router())
+app.include_router(mini_app.create_router())
+
 telemetry.instrument_fastapi(app)

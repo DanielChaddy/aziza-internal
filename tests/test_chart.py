@@ -86,7 +86,7 @@ def test_simulate_is_not_routed() -> None:
 
 
 def test_ingress_is_an_allowlist_with_no_catch_all() -> None:
-    for path in ("/webhook", "/healthz", "/health"):
+    for path in ("/webhook", "/healthz", "/health", "/j", "/mini-app"):
         assert f'"{path}"' in _ING or f"path: {path}" in _ING
     assert 'path: "/"' not in _ING
     assert "\n          - path: /\n" not in _ING
@@ -115,7 +115,14 @@ def test_no_secret_value_appears_in_the_chart() -> None:
         if not path.is_file():
             continue
         body = path.read_text(encoding="utf-8")
-        for key in ("GOOGLE_API_KEY:", "TELEGRAM_BOT_TOKEN:", "TELEGRAM_WEBHOOK_SECRET:"):
+        for key in (
+            "GOOGLE_API_KEY:",
+            "TELEGRAM_BOT_TOKEN:",
+            "TELEGRAM_WEBHOOK_SECRET:",
+            # Both spellings, because the first does not match the second.
+            "JOIN_LINK_SECRET:",
+            "JOIN_LINK_SECRET_PREVIOUS:",
+        ):
             assert key not in body, f"{path.name} names {key}"
 
 
@@ -171,3 +178,35 @@ def test_the_summary_sends_and_everyone_registered_can_receive() -> None:
     assert "sendMode: live" in _VALUES
     invented = {p["telegram_user_id"] for p in demo_data.SPECIALISTS}
     assert not {p["telegram_user_id"] for p in staff_data.STAFF} & invented
+
+
+# --- the two routes a browser reaches ----------------------------------------
+
+
+_HELPERS = _code(_CHART / "templates" / "_helpers.tpl")
+
+
+def test_the_two_browser_paths_are_on_the_allowlist() -> None:
+    """`/j` is the one entry the internet reaches with no credential of any kind, and `/mini-app`
+    is gated on a signed launch except for a shell that carries no salon data. Both are useless
+    unless routed, and neither is routed unless it is on this list."""
+    assert '"/j"' in _ING
+    assert '"/mini-app"' in _ING
+
+
+def test_the_join_base_url_is_derived_from_the_ingress_host() -> None:
+    """Two spellings of one hostname is how a QR points at nothing. An explicit `env` entry, not a
+    `config` key: `configmap-env.yaml` ranges over a plain map and Helm does not re-render values
+    as templates, so the same string in values.yaml would reach the pod literally."""
+    assert "name: JOIN_BASE_URL" in _HELPERS
+    assert ".Values.ingress.host" in _HELPERS
+    assert "JOIN_BASE_URL" not in _code(_CHART / "values.yaml")
+
+
+def test_every_routed_path_reaches_the_one_workload() -> None:
+    """One workload, deliberately: the mini app verifies Telegram's initData with a key derived
+    from the bot token, so a second pod would hold that credential too. A second backend here
+    would be that split arriving without the argument for it."""
+    assert _ING.count("backend:") == 1
+    assert _ING.count("service:") == 1
+    assert _ING.count('include "aziza.fullname" $') == 1

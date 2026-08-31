@@ -459,3 +459,80 @@ same rule, in the same place, as the discipline on a service (§3). Holding two 
 neither is a question rather than a guess: a client taken out of the wrong line is a woman sent to
 the wrong chair.
 
+## §13 · The code she scans, and the page it opens
+
+**A client puts herself in the line by scanning a code a specialist is showing her.** That is the
+one thing in this service a client touches, and it is a FORM rather than a conversation — §1 still
+holds, because no client talks to the assistant. What she reaches is two routes and four short
+pages, and the assistant is not behind either of them.
+
+**The code is short-lived on purpose.** A printed one can be photographed and used from a sofa, so
+the mini app mints a fresh signed link every couple of minutes and the old one dies. The signing is
+`agent_webview.tokens` — HMAC, audience-bound, with the clock and the nonce as arguments, so the
+exact string is a value a test asserts.
+
+**A token is a CAPABILITY, not a person.** It proves somebody was standing where the code was shown
+in the last few minutes. It says nothing about who she is, so the page asks, and nothing downstream
+trusts the token for identity.
+
+**Three numbers are one design**, and `aziza_adk/config.py` holds them: the token's life, the
+rotation period, and the leeway. What matters is `(ttl - rotate) + leeway` — the grace a client
+still has after the code she raised her phone at has left the screen. Too short and there is a
+window every rotation in which a real scan fails and nobody can reproduce it; too long and a
+photographed code is worth having. The floor is also a client typing: a client the salon knows
+reaches the line in ONE post, and one it does not posts twice.
+
+**Her number is half of an identity here too** (§3). A number reaches a mother and her daughter, so
+`queries.clients_on_phone` returns candidates and the page offers her the names it found rather
+than asking her to type one. That is §3's rule arriving from the other end, and `clients.pick` is
+the same function.
+
+**What it refuses, and what it says while refusing.** A stale code says it is stale, because that is
+the failure a real client actually hits. Every other reason — forged, wrong audience, wrong secret —
+renders the same page and explains nothing: the difference would answer questions about the secret
+for whoever is asking. Joining is refused outright while the salon is closed, on `hours.is_open`,
+which carries no grace hour — the grace is for a specialist finishing the client already in her
+chair, and a client asking to be STARTED after closing is asking for something else.
+
+**One code is not one join, and it is not unlimited either.** A code sits on a screen and several
+clients legitimately scan the same one, so single-use would refuse the second real client of the
+afternoon. It admits a ceiling instead, which bounds a script rather than a salon. The real defence
+against a repeat is elsewhere and is structural: `queries.record_arrival` reuses the arrival she is
+already standing in, so scanning twice cannot put one woman in the line twice.
+
+**What this does not stop, stated plainly:** somebody in the salon with a live code can enter names
+and numbers that are not hers. Nothing on an unauthenticated form can prevent that. The backstop is
+human — the line is on the specialist's own screen, and `tools.remove_from_queue` takes out whatever
+is wrong.
+
+## §14 · The mini app
+
+**The specialist's side is a Telegram Mini App**, because a rotating code needs a screen that keeps
+minting and a printed sign cannot. It shows the current code, counts down to the next one, and lists
+the line as it stands.
+
+**The credential is the one §3 already names.** Telegram signs `initData` with a key derived from
+the bot token, and the id inside it is the `telegram_user_id` the `specialists` table keys on — so a
+mini app request is authorized exactly as a message is, by a row the salon registered in advance.
+A valid Telegram signature from somebody the salon never registered reaches nothing. What Telegram
+adds over a webhook delivery is the signature itself.
+
+`initData` travels in a HEADER and never in a query string: it carries its own signature, and a
+query string lands in an access log and in a Referer.
+
+**The shell and the script are PUBLIC, and that is not a gap.** `initData` reaches the page through
+`window.Telegram.WebApp`, so it is absent from the request that fetches the page and cannot gate it.
+The shell therefore carries no name and no figure — everything about the salon arrives through one
+of the two gated reads.
+
+**Its policy is the one place in this service that must not deny framing.** A mini app IS framed by
+Telegram Web, so `frame-ancestors 'none'` would break it outright, and `X-Frame-Options` has no
+origin-list form so any value breaks it. Both are asserted, because the failure is a blank page with
+nothing on the server side to see.
+
+**It rides on the same workload as the webhook.** A separate one would need the bot token to verify
+`initData`, so splitting would put that credential in two pods instead of one — the opposite of what
+a split is for. The cost is that the join page shares the webhook's fate during a rollout, and the
+trigger for revisiting it is the one the runbook already names: more than one replica forces the
+split, and that is a code project rather than a chart change.
+

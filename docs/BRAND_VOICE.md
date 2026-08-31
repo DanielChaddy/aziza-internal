@@ -62,3 +62,28 @@ Nothing else about her is stored, said or asked for.
 **The one exception is a report an owner asked for**, where her number is shown because that is
 what the report is for: an owner reading who stopped coming is reading it in order to call her.
 The exception is the OWNER's, not the report's — nothing a specialist reads carries a number.
+
+## §8 · The client reads a different page
+
+**§1 through §7 are about a colleague. This section is about a customer.** A client never talks to
+the assistant (docs/PROJECT_DEFINITION.md §1), but she does read the page the code takes her to,
+and that page is the salon speaking to her rather than to the woman serving her.
+
+**It stays "tú", and for a different reason than §1's.** There the argument is that `usted` reads
+as a form letter to a colleague; here it is that a salon whose specialists say tú across the chair
+cannot have its own page address the same woman as a stranger. Two voices for one salon is worse
+than either voice.
+
+**Warm, not brisk.** §2's shortness is for somebody standing between clients with a phone in one
+hand. A client filling in her name has nothing else to do, so the page can afford a whole
+sentence — *"Listo, Carmen. Ya estás en la fila."* rather than *"En fila."*
+
+**Nothing addressed to her assumes she is a woman.** The salon prices services for men too, so
+*la próxima* is a guess the copy has no business making. A turn and a number carry no article, and
+where there is a name the page uses it.
+
+**A client-facing constant is named `*_CLIENT_COPY`, and they all live in `aziza_adk/queue_text.py`.**
+That suffix is what keeps them out of §6's sweep: `tests/test_voice.py` walks the two sets
+separately, so this audience is gated as itself. A client-facing string named `*_MSG` would be
+checked against the colleague register and would make §6's own sentence false.
+

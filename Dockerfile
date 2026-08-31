@@ -1,4 +1,5 @@
-# Salón Aziza — app image. One workload: the Telegram webhook.
+# Salón Aziza — app image. One workload, three surfaces: the Telegram webhook, the client's
+# join page and the specialist's mini app — docs/PROJECT_DEFINITION.md §14.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \

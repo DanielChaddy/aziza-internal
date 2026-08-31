@@ -22,7 +22,7 @@ else is deployed.
 
 ## Prerequisites
 
-Five things this chart does not create, in the order they are needed. None of them are in git.
+Six things this chart does not create, in the order they are needed. None of them are in git.
 
 **1 · The two databases.** On `dev-db-pgsql`, `aziza` and `aziza_sessions`, and a role that owns
 both. They must be separate databases: ADK creates its own tables in whatever it is pointed at, and
@@ -66,6 +66,22 @@ Secret carries:
 curl "https://api.telegram.org/bot<TOKEN>/setWebhook" \
      -d url=https://aziza.danielchaddy.com/webhook -d secret_token=<TELEGRAM_WEBHOOK_SECRET>
 ```
+
+**6 · The mini app registration.** The specialist's rotating code lives in a Telegram Mini App, and
+Telegram will not open one it has not been told about. With BotFather: `/newapp`, then the URL
+`https://aziza.danielchaddy.com/mini-app`. Then point the bot's menu button at it, which is what
+puts it one tap from the chat:
+
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setChatMenuButton" \
+     -H 'content-type: application/json' \
+     -d '{"menu_button":{"type":"web_app","text":"Fila",
+          "web_app":{"url":"https://aziza.danielchaddy.com/mini-app"}}}'
+```
+
+Until both are done the routes answer normally and no specialist has any way to reach them — the
+deploy looks complete and the feature is invisible. `JOIN_LINK_SECRET` is the other half: unset, the
+mini app opens and shows no code at all.
 
 ## Deploy
 
