@@ -51,6 +51,12 @@ TIMEZONE: str = os.getenv("TIMEZONE", "America/Santo_Domingo")
 # per-person split is a schema change when a real one appears, not a guess made today.
 COMMISSION_PCT: int = _int("COMMISSION_PCT", 40)
 
+# --- What the salon buys ----------------------------------------------------
+# How long a photographed invoice stays answerable. A photo taken and confirmed is one turn; a
+# "sí" an hour later answers a question whose figures she has stopped looking at, so the draft is
+# simply not found and she sends the photo again. See docs/PROJECT_DEFINITION.md §15.
+EXPENSE_DRAFT_TTL_MINUTES: int = _int("EXPENSE_DRAFT_TTL_MINUTES", 15)
+
 # --- Serving limits ---------------------------------------------------------
 # Hard cap on ONE turn. The Gemini SSE stream has no timeout of its own — google-genai sets
 # timeout=None — so a server that stops emitting chunks parks the turn forever and the

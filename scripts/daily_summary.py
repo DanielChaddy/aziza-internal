@@ -115,6 +115,7 @@ def _ask_to_close_the_register(conn, day: dt.date) -> int:
         day,
         queries.expected_register(conn, day),
         [(t["full_name"], t["tips"]) for t in queries.tips_owed(conn, day)],
+        [(e["supplier"], e["total_paid"]) for e in queries.expenses_on(conn, day)],
     )
     return sum(
         _send(owner["telegram_user_id"], text) for owner in queries.owners_with_a_channel(conn)

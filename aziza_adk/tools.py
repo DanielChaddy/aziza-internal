@@ -17,11 +17,12 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from conversation_core import fold
+from conversation_core import dates, fold
 from google.adk.tools import ToolContext
 
 from aziza_adk import (
@@ -30,6 +31,7 @@ from aziza_adk import (
     catalog_data,
     clients,
     config,
+    fiscal,
     money,
     names,
     pay,
@@ -57,10 +59,18 @@ AFTER_HOURS_TOOL_NAMES = frozenset(
     }
 )
 
+#: The expense tools are absent from the set above ON PURPOSE: all of them are an owner's, and
+#: an owner already records at any hour, so membership would be a set nothing could be refused by.
+#: It is also right — she does the books after closing (docs/PROJECT_DEFINITION.md §15).
+#:
 #: What only an owner may do at all, at any hour. `guards.before_tool_guard` refuses these for
 #: anyone else; the bodies re-check, as they do for `on_behalf_of`.
 OWNER_TOOL_NAMES = frozenset(
     {
+        "draft_expense",
+        "register_expense",
+        "amend_expense",
+        "void_expense",
         "close_register",
         "record_loan",
         "salon_day",
@@ -74,6 +84,10 @@ OWNER_TOOL_NAMES = frozenset(
 #: them without one; the bodies re-check.
 SPECIALIST_TOOL_NAMES = frozenset(
     {
+        "draft_expense",
+        "register_expense",
+        "amend_expense",
+        "void_expense",
         "start_ticket",
         "add_service",
         "set_client_gender",
@@ -103,6 +117,10 @@ SPECIALIST_TOOL_NAMES = frozenset(
 #: The writes. A ticket must have been quoted before any of the money ones runs.
 WRITE_TOOL_NAMES = frozenset(
     {
+        "draft_expense",
+        "register_expense",
+        "amend_expense",
+        "void_expense",
         "start_ticket",
         "add_service",
         "set_client_gender",
@@ -209,6 +227,26 @@ NO_CREDIT_WALK_IN_MSG = (
     "A esa clienta no le puedo fiar: no tengo su teléfono para buscarla en la próxima visita."
 )
 
+NEED_PHOTO_MSG = "Mándame la foto de la factura y la registro."
+NO_DRAFT_MSG = "No tengo una factura pendiente. Mándame la foto otra vez."
+EXPENSE_NOT_SHOWN_MSG = "Déjame mostrarte la factura antes de registrarla."
+BAD_RNC_MSG = "Ese RNC no me cuadra. Tiene 9 dígitos, o 11 si es cédula."
+BAD_NCF_MSG = "Ese NCF no tiene la forma correcta. Revísamelo en la factura."
+BAD_INVOICE_DATE_MSG = "No entendí la fecha de la factura. Dímela otra vez."
+FUTURE_INVOICE_DATE_MSG = "Esa fecha está en el futuro. Revísala en la factura."
+INVOICE_TOO_OLD_MSG = "Esa factura tiene más de un año, así que ya no entra en ningún 606."
+TOTAL_MISMATCH_MSG = (
+    "Las partidas suman {parts} y el total pagado dice {total}. Revísame la factura."
+)
+NO_SUPPLIER_MSG = "¿De cuál suplidor es la factura?"
+BAD_CATEGORY_MSG = "¿Qué tipo de gasto es? Dime materiales, alquiler, servicios o activos."
+BAD_FIELD_MSG = "¿Cuál dato corrijo: el total, el ITBIS, el RNC, el NCF, la fecha o el suplidor?"
+ALREADY_REGISTERED_MSG = "Esa factura ya está registrada."
+DAY_ALREADY_CLOSED_MSG = "La caja de ese día ya está cerrada, así que no puedo moverla."
+NOT_REGISTERED_EXPENSE_MSG = "No tengo esa factura registrada."
+BAD_MONTH_MSG = "¿De cuál mes te saco el 606?"
+NO_REPORT_LINK_MSG = "No puedo generar el enlace ahora mismo. Avísale a la administración."
+
 QUEUE_EMPTY_MSG = "No hay nadie esperando por tu área ahora mismo."
 WHICH_AREA_MSG = "¿De cuál de tus áreas la llamo?"
 NOT_YOUR_AREA_MSG = "Esa área no es tuya, así que no puedo llamarte a nadie de esa fila."
@@ -260,6 +298,59 @@ _METHODS = {
     "bhd": "bhd",
     "banco bhd": "bhd",
 }
+
+#: What she calls each kind of gasto, folded. The values are `fiscal.CATEGORIES` codes. A folded
+#: table rather than a resolve against the list itself: DGII's wording is not what she says out
+#: loud, and "materiales" has to reach `02`.
+_EXPENSE_CATEGORIES = {
+    "materiales": "02",
+    "material": "02",
+    "insumos": "02",
+    "suministros": "02",
+    "servicios": "02",
+    "trabajos": "02",
+    "alquiler": "03",
+    "renta": "03",
+    "local": "03",
+    "activo fijo": "04",
+    "mantenimiento": "04",
+    "reparacion": "04",
+    "representacion": "05",
+    "personal": "01",
+    "nomina": "01",
+    "financiero": "07",
+    "banco": "07",
+    "extraordinario": "08",
+    "costo de venta": "09",
+    "reventa": "09",
+    "activos": "10",
+    "equipo": "10",
+    "mobiliario": "10",
+    "seguro": "11",
+    "seguros": "11",
+}
+
+#: Which column of a staged invoice she means. Named rather than inferred, and resolved against
+#: this table rather than interpolated: the value reaches a SET clause.
+_EXPENSE_FIELDS = {
+    "total": "total_paid",
+    "monto": "total_paid",
+    "itbis": "itbis",
+    "rnc": "rnc",
+    "ncf": "ncf",
+    "fecha": "invoice_date",
+    "suplidor": "supplier",
+    "proveedor": "supplier",
+    "bienes": "bienes",
+    "servicios": "servicios",
+    "propina": "propina_legal",
+    "tipo": "category",
+    "categoria": "category",
+}
+
+#: What she means by an invoice nothing has paid yet. It moves no money, so no drawer is short of
+#: it and the register never sees it (§15).
+_ON_CREDIT = frozenset({"credito", "a credito", "fiado", "por pagar", "pendiente"})
 
 #: Which of the two balances a payment pays down. Named rather than inferred: paying part of
 #: what she owes has to say which part, or the two figures on her message stop meaning anything.
@@ -1378,6 +1469,7 @@ def close_register(
                 conn, day, session.specialist_id(tool_context), counted, expected
             )
             tips = queries.tips_owed(conn, day)
+            spent = queries.expenses_on(conn, day)
             return {
                 "closed": True,
                 "counted": {k: money.rd(v) for k, v in counted.items()},
@@ -1386,7 +1478,429 @@ def close_register(
                 # Hers in full, and paid out of the drawer that was just counted — so it is
                 # reported beside the close rather than taken off it.
                 "tips_to_pay": [f"{t['full_name']} — {money.rd(t['tips'])}" for t in tips],
+                # Already OFF the expectation above. Named so a lower figure is explained rather
+                # than appearing from nowhere (§7).
+                "spent": [f"{e['supplier']} — {money.rd(e['total_paid'])}" for e in spent],
             }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+# --- what the salon buys ----------------------------------------------------
+
+
+#: Which refusal each `fiscal.Problem` code becomes. A code with no sentence here is a KeyError in
+#: `tests/test_tools.py` rather than a silence in a turn.
+_EXPENSE_REFUSALS = {
+    "bad_total": BAD_AMOUNT_MSG,
+    "total_mismatch": TOTAL_MISMATCH_MSG,
+    "bad_rnc": BAD_RNC_MSG,
+    "bad_ncf": BAD_NCF_MSG,
+    "bad_invoice_date": BAD_INVOICE_DATE_MSG,
+    "future_invoice_date": FUTURE_INVOICE_DATE_MSG,
+    "invoice_too_old": INVOICE_TOO_OLD_MSG,
+    "no_supplier": NO_SUPPLIER_MSG,
+}
+
+
+def _amount(raw: str) -> Decimal | None:
+    """One amount off a photograph, or None. "" is zero: most columns are simply absent."""
+    if not str(raw or "").strip():
+        return ZERO
+    try:
+        found = money.money(raw)
+    except ValueError:
+        return None
+    return found if found >= ZERO else None
+
+
+def _invoice_from(**args: str) -> tuple[fiscal.Invoice | None, dict | None]:
+    """What the model read, as values — or the refusal for a figure that is not one."""
+    amounts: dict[str, Decimal] = {}
+    for name in ("bienes", "servicios", "itbis", "isc", "otros", "propina_legal", "total_paid"):
+        found = _amount(args.get(name, ""))
+        if found is None:
+            return None, {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+        amounts[name] = found
+    return (
+        fiscal.Invoice(
+            supplier=str(args.get("supplier") or "").strip(),
+            rnc=str(args.get("rnc") or "").strip(),
+            ncf=str(args.get("ncf") or "").strip(),
+            invoice_date=dates.parse_date(args.get("invoice_date")),
+            **amounts,
+        ),
+        None,
+    )
+
+
+#: A mismatch is EXPECTED while she is correcting one field at a time: amending the ITBIS moves
+#: what the parts come to, and the total she is about to correct has not moved yet. So it is a
+#: notice on the block during an amendment and a refusal at the moment of writing (§15).
+_MID_CORRECTION = frozenset({"total_mismatch"})
+
+
+def _refused_invoice(
+    invoice: fiscal.Invoice, problems, *, mid_correction: bool = False
+) -> dict | None:
+    """The first refusal among `problems`, worded. None when every one is a notice."""
+    first = next(
+        (p for p in problems if p.blocking and not (mid_correction and p.code in _MID_CORRECTION)),
+        None,
+    )
+    if first is None:
+        return None
+    message = _EXPENSE_REFUSALS[first.code]
+    if first.code == "total_mismatch":
+        message = message.format(
+            parts=money.rd(invoice.adds_up), total=money.rd(invoice.total_paid)
+        )
+    return {"error": first.code, "message": message}
+
+
+def _shown(problems, *, mid_correction: bool = False) -> tuple:
+    """Which problems the block says out loud: every notice, plus a refusal being tolerated."""
+    return fiscal.notices(problems) + tuple(
+        p for p in problems if p.blocking and mid_correction and p.code in _MID_CORRECTION
+    )
+
+
+def _draft_answer(row: dict, problems, tool_context: Any, *, mid_correction: bool = False) -> dict:
+    """The rendered block, and the witness that she was shown it.
+
+    Both happen HERE rather than in each caller, for `_ticket_answer`'s reason: a witness recorded
+    without her actually being shown the figure would satisfy the gate on its own.
+    """
+    said = dict(fiscal.CATEGORIES).get(row["category"], row["category"])
+    block = receipts.render_expense_draft(
+        row["supplier"],
+        row["total_paid"],
+        ncf=row["ncf"],
+        invoice_date=row["invoice_date"],
+        category=said,
+        bienes=row["bienes"],
+        servicios=row["servicios"],
+        itbis=row["itbis"],
+        propina_legal=row["propina_legal"],
+        notices=tuple(
+            receipts.EXPENSE_NOTICE_TEXT[p.code]
+            for p in _shown(problems, mid_correction=mid_correction)
+        ),
+    )
+    session.remember_expense_shown(tool_context, row["expense_ref"], row["total_paid"])
+    return {"confirmation": block, "on_606": row["on_606"]}
+
+
+def draft_expense(
+    supplier: str,
+    total_paid: str,
+    invoice_date: str,
+    category: str = "",
+    rnc: str = "",
+    ncf: str = "",
+    bienes: str = "",
+    servicios: str = "",
+    itbis: str = "",
+    isc: str = "",
+    otros: str = "",
+    propina_legal: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Read a photographed supplier invoice back to the owner before anything is recorded.
+    Owners only. Registers nothing.
+
+    Needs a photo already in this conversation: there is no argument carrying one, so this cannot
+    be called on a description of an invoice.
+
+    Args:
+        supplier: Who issued it, as printed.
+        total_paid: What the salon actually paid, in numbers. Must equal the parts below.
+        invoice_date: The date printed on it, as YYYY-MM-DD.
+        category: What kind of gasto it is, in her words.
+        rnc: The supplier's RNC or cédula. Empty when the invoice shows none.
+        ncf: The comprobante fiscal. Empty when the invoice shows none.
+        bienes: What was charged for goods, in numbers.
+        servicios: What was charged for services, in numbers.
+        itbis: The ITBIS charged, in numbers.
+        isc: Impuesto selectivo al consumo, in numbers.
+        otros: Other taxes or charges, in numbers.
+        propina_legal: The legal 10% tip, in numbers.
+
+    Returns:
+        {"confirmation": str, "on_606": bool} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    handle = session.photo(tool_context)
+    if not handle:
+        return {"error": "need_photo", "message": NEED_PHOTO_MSG}
+
+    code = _EXPENSE_CATEGORIES.get(fold(category or "").strip())
+    if code is None:
+        return {"error": "bad_category", "message": BAD_CATEGORY_MSG}
+
+    invoice, refused = _invoice_from(
+        supplier=supplier,
+        rnc=rnc,
+        ncf=ncf,
+        invoice_date=invoice_date,
+        bienes=bienes,
+        servicios=servicios,
+        itbis=itbis,
+        isc=isc,
+        otros=otros,
+        propina_legal=propina_legal,
+        total_paid=total_paid,
+    )
+    if refused is not None:
+        return refused
+    problems = fiscal.check(invoice, today=_today())
+    if (refused := _refused_invoice(invoice, problems)) is not None:
+        return refused
+
+    identified = fiscal.rnc(invoice.rnc) if invoice.rnc else None
+    try:
+        with queries.connect() as conn:
+            row = queries.create_expense_draft(
+                conn,
+                session.specialist_id(tool_context),
+                {
+                    "supplier": invoice.supplier,
+                    "rnc": identified[0] if identified else "",
+                    "tipo_id": identified[1] if identified else "",
+                    "ncf": fiscal.ncf(invoice.ncf) or "" if invoice.ncf else "",
+                    "ncf_modificado": "",
+                    "category": code,
+                    "invoice_date": invoice.invoice_date,
+                    "bienes": invoice.bienes,
+                    "servicios": invoice.servicios,
+                    "itbis": invoice.itbis,
+                    "isc": invoice.isc,
+                    "otros": invoice.otros,
+                    "propina_legal": invoice.propina_legal,
+                    "total_paid": invoice.total_paid,
+                },
+                photo_file_id=handle,
+                on_606=fiscal.on_606(invoice),
+            )
+            return _draft_answer(row, problems, tool_context)
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def amend_expense(field: str, value: str, tool_context: ToolContext = None) -> dict:
+    """Correct ONE field she says was read wrong, and show her the whole invoice again.
+    Owners only.
+
+    Re-showing is what re-arms the gate on the new total, so a figure amended after she confirmed
+    the old one cannot be registered against that confirmation.
+
+    Args:
+        field: Which one — el total, el ITBIS, el RNC, el NCF, la fecha, el suplidor.
+        value: What it should say.
+
+    Returns:
+        {"confirmation": str, "on_606": bool} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    column = _EXPENSE_FIELDS.get(fold(field or "").strip())
+    if column is None:
+        return {"error": "bad_field", "message": BAD_FIELD_MSG}
+
+    try:
+        with queries.connect() as conn:
+            row = queries.expense_draft(
+                conn, session.specialist_id(tool_context), not_before=_draft_horizon()
+            )
+            if row is None:
+                return {"error": "no_draft", "message": NO_DRAFT_MSG}
+
+            corrected, refused = _corrected(row, column, value)
+            if refused is not None:
+                return refused
+            problems = fiscal.check(corrected, today=_today())
+            if (refused := _refused_invoice(corrected, problems, mid_correction=True)) is not None:
+                return refused
+
+            written = _column_value(column, corrected, value)
+            row = queries.amend_expense_draft(
+                conn, row["id"], column, written, on_606=fiscal.on_606(corrected)
+            )
+            return _draft_answer(row, problems, tool_context, mid_correction=True)
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def _staged(row: dict) -> fiscal.Invoice:
+    """A staged row back as the value object the checks are written against."""
+    return fiscal.Invoice(
+        supplier=row["supplier"],
+        rnc=row["rnc"],
+        ncf=row["ncf"],
+        invoice_date=row["invoice_date"],
+        bienes=row["bienes"],
+        servicios=row["servicios"],
+        itbis=row["itbis"],
+        isc=row["isc"],
+        otros=row["otros"],
+        propina_legal=row["propina_legal"],
+        total_paid=row["total_paid"],
+    )
+
+
+def _corrected(row: dict, column: str, value: str) -> tuple[fiscal.Invoice, dict | None]:
+    """The staged invoice with one column replaced, or the refusal for a value that is not one.
+
+    `category` is not on the value object at all — it is a code the salon chose rather than
+    anything printed on the paper, so nothing about it is checkable here.
+    """
+    staged = _staged(row)
+    said = str(value or "").strip()
+    if column == "category":
+        if _EXPENSE_CATEGORIES.get(fold(said)) is None:
+            return staged, {"error": "bad_category", "message": BAD_CATEGORY_MSG}
+        return staged, None
+    if column in ("supplier", "rnc", "ncf"):
+        return replace(staged, **{column: said}), None
+    if column == "invoice_date":
+        return replace(staged, invoice_date=dates.parse_date(said)), None
+    found = _amount(said)
+    if found is None:
+        return staged, {"error": "bad_amount", "message": BAD_AMOUNT_MSG}
+    return replace(staged, **{column: found}), None
+
+
+def _column_value(column: str, invoice: fiscal.Invoice, value: str):
+    """What actually goes in the column, normalized the way the draft was."""
+    if column == "invoice_date":
+        return invoice.invoice_date
+    if column == "rnc":
+        return (fiscal.rnc(invoice.rnc) or ("", ""))[0]
+    if column == "ncf":
+        return fiscal.ncf(invoice.ncf) or "" if invoice.ncf else ""
+    if column == "supplier":
+        return invoice.supplier
+    if column == "category":
+        return _EXPENSE_CATEGORIES.get(fold(value or "").strip(), "")
+    return getattr(invoice, column)
+
+
+def _draft_horizon() -> dt.datetime:
+    """The oldest a draft may be and still be the one she is answering about (§15)."""
+    return now() - dt.timedelta(minutes=config.EXPENSE_DRAFT_TTL_MINUTES)
+
+
+def register_expense(
+    method: str,
+    paid_on: str = "",
+    tool_context: ToolContext = None,
+) -> dict:
+    """Record the invoice she was just shown, and take what it cost off the register.
+    Owners only.
+
+    Takes no amount: every figure comes off the row she was shown, so there is nothing here for a
+    misreading to arrive in a second time.
+
+    Args:
+        method: How it was paid — efectivo, Banreservas, BHD, or a crédito when nothing has
+            paid it yet.
+        paid_on: The day the money left, as YYYY-MM-DD. Empty means today.
+
+    Returns:
+        {"registered": str, "on_606": bool} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+
+    said = fold(method or "").strip()
+    on_credit = said in _ON_CREDIT
+    canonical = None if on_credit else _METHODS.get(said)
+    if canonical is None and not on_credit:
+        return {"error": "bad_method", "message": BAD_METHOD_MSG}
+
+    day = None
+    if not on_credit:
+        day = dates.parse_date(paid_on) if paid_on else _today()
+        if day is None:
+            return {"error": "bad_invoice_date", "message": BAD_INVOICE_DATE_MSG}
+
+    try:
+        with queries.connect() as conn:
+            row = queries.expense_draft(
+                conn, session.specialist_id(tool_context), not_before=_draft_horizon()
+            )
+            if row is None:
+                return {"error": "no_draft", "message": NO_DRAFT_MSG}
+            if not session.was_expense_shown(tool_context, row["expense_ref"], row["total_paid"]):
+                return {"error": "not_shown", "message": EXPENSE_NOT_SHOWN_MSG}
+            # Re-checked here rather than trusted from the draft: an amendment is allowed to leave
+            # the parts and the total momentarily inconsistent, and this is where that stops.
+            staged = _staged(row)
+            if (
+                refused := _refused_invoice(staged, fiscal.check(staged, today=_today()))
+            ) is not None:
+                return refused
+            # A closed day's expectation is a frozen snapshot on purpose, so nothing may reach
+            # back and lower it — §7.
+            if day is not None and queries.register_close_for(conn, day) is not None:
+                return {"error": "day_already_closed", "message": DAY_ALREADY_CLOSED_MSG}
+
+            written, reason = queries.register_expense(
+                conn,
+                row["id"],
+                method=canonical,
+                business_date=day,
+                forma_pago=fiscal.FORMA_PAGO.get(canonical or "", "04"),
+            )
+            if reason:
+                return {"error": reason, "message": ALREADY_REGISTERED_MSG}
+            if written is None:
+                return {"error": "no_draft", "message": NO_DRAFT_MSG}
+            return {
+                "registered": receipts.render_expense_registered(
+                    written["supplier"],
+                    written["total_paid"],
+                    method=written["method"],
+                    on_606=written["on_606"],
+                ),
+                "on_606": written["on_606"],
+            }
+    except Exception as exc:  # noqa: BLE001 - see the module docstring
+        return _failed(exc)
+
+
+def void_expense(expense_ref: str, tool_context: ToolContext = None) -> dict:
+    """Take a registered invoice back off the salon's record, and off the register with it.
+    Owners only.
+
+    Args:
+        expense_ref: Which one, as it came back from `register_expense`.
+
+    Returns:
+        {"voided": str} or {"error", "message"}.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    if (refused := _owner_only(tool_context)) is not None:
+        return refused
+    try:
+        with queries.connect() as conn:
+            row = queries.registered_expense(conn, str(expense_ref or "").strip())
+            if row is None:
+                return {"error": "unknown_expense", "message": NOT_REGISTERED_EXPENSE_MSG}
+            if row["business_date"] and queries.register_close_for(conn, row["business_date"]):
+                return {"error": "day_already_closed", "message": DAY_ALREADY_CLOSED_MSG}
+            written = queries.void_expense(conn, row["id"])
+            if written is None:
+                return {"error": "unknown_expense", "message": NOT_REGISTERED_EXPENSE_MSG}
+            return {"voided": f"{written['supplier']} — {money.rd(written['total_paid'])}"}
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)
 
@@ -1428,6 +1942,11 @@ def salon_day(tool_context: ToolContext = None) -> dict:
                 "expected": {
                     k: money.rd(v) for k, v in queries.expected_register(conn, day).items()
                 },
+                # Already OFF `expected`, and listed for the same reason it is on the close (§7).
+                "spent": [
+                    f"{e['supplier']} — {money.rd(e['total_paid'])}"
+                    for e in queries.expenses_on(conn, day)
+                ],
             }
     except Exception as exc:  # noqa: BLE001 - see the module docstring
         return _failed(exc)

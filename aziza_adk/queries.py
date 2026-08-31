@@ -590,7 +590,8 @@ def expected_register(conn: psycopg.Connection, day: dt.date) -> dict[str, Decim
     subtracted would double-count it — which is why that column is reported and never summed here.
 
     Cash tips are in the drawer until they are handed over at the end of the day, so they are part
-    of what the count should find (§7).
+    of what the count should find (§7). What the salon spent comes off it, exactly as a loan does —
+    and an invoice bought on terms has no method, so it never moved and is not here (§15).
     """
     totals = {"cash": ZERO_MONEY, "banreservas": ZERO_MONEY, "bhd": ZERO_MONEY}
     rows = fetchall(
@@ -607,6 +608,9 @@ def expected_register(conn: psycopg.Connection, day: dt.date) -> dict[str, Decim
             SELECT method, CASE WHEN kind = 'loan' THEN -amount ELSE amount END
               FROM specialist_ledger
              WHERE business_date = %(day)s AND kind IN ('loan', 'payment')
+            UNION ALL
+            SELECT method, -total_paid FROM expenses
+             WHERE business_date = %(day)s AND status = 'registered' AND method IS NOT NULL
         ) moves GROUP BY method
         """,
         {"day": day},
@@ -1322,3 +1326,184 @@ def leave_line(conn: psycopg.Connection, client_id: int, business_date: dt.date)
         closed = cur.rowcount
     conn.commit()
     return closed
+
+
+# --- what the salon buys ----------------------------------------------------
+
+
+#: Every column a draft carries, so the render and the amendment read one list rather than two.
+_EXPENSE_FIELDS = (
+    "supplier",
+    "rnc",
+    "tipo_id",
+    "ncf",
+    "ncf_modificado",
+    "category",
+    "invoice_date",
+    "bienes",
+    "servicios",
+    "itbis",
+    "isc",
+    "otros",
+    "propina_legal",
+    "total_paid",
+)
+
+
+def create_expense_draft(
+    conn: psycopg.Connection,
+    recorded_by: int,
+    values: dict,
+    *,
+    photo_file_id: str,
+    on_606: bool,
+) -> dict:
+    """Stage one photographed invoice for her to read, replacing whatever was staged before.
+
+    REPLACES rather than colliding with `ux_expenses_one_draft_per_owner`: photographing a second
+    invoice while the first is still on screen is the ordinary case, not an error. A delete rather
+    than a fourth status — a draft is a question waiting for an answer, and keeping every misread
+    photograph would leave a wrong figure beside a right one in the table the 606 reads (§15).
+    """
+    columns = ", ".join(_EXPENSE_FIELDS)
+    placeholders = ", ".join(f"%({name})s" for name in _EXPENSE_FIELDS)
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM expenses WHERE recorded_by = %(by)s AND status = 'draft'",
+            {"by": recorded_by},
+        )
+        cur.execute(
+            f"INSERT INTO expenses (expense_ref, recorded_by, status, photo_file_id, on_606, "
+            f"                      {columns}) "
+            f"VALUES ('exp-' || gen_random_uuid()::text, %(by)s, 'draft', %(photo)s, %(on606)s, "
+            f"        {placeholders}) RETURNING *",
+            {"by": recorded_by, "photo": photo_file_id, "on606": on_606, **values},
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def expense_draft(
+    conn: psycopg.Connection, recorded_by: int, *, not_before: dt.datetime
+) -> dict | None:
+    """Her staged invoice, if it is still fresh enough to be the one she is answering about.
+
+    The freshness is IN THE QUERY rather than checked after it, the same way a client's number is
+    keyed in the UPDATE itself: an old draft is simply not found, so "sí" an hour later asks for
+    the photograph again instead of registering figures she has stopped looking at (§15).
+    """
+    return fetchone(
+        conn,
+        "SELECT * FROM expenses "
+        " WHERE recorded_by = %(by)s AND status = 'draft' AND recorded_at >= %(since)s",
+        {"by": recorded_by, "since": not_before},
+    )
+
+
+def amend_expense_draft(
+    conn: psycopg.Connection, expense_id: int, column: str, value: object, *, on_606: bool
+) -> dict:
+    """Change ONE column of a staged invoice and hand the whole row back.
+
+    `column` is resolved against `_EXPENSE_FIELDS` by the caller, never interpolated from a turn.
+    """
+    if column not in _EXPENSE_FIELDS:
+        raise ValueError(f"not an expense column: {column!r}")
+    with conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE expenses SET {column} = %(value)s, on_606 = %(on606)s, recorded_at = now() "
+            f" WHERE id = %(id)s AND status = 'draft' RETURNING *",
+            {"value": value, "on606": on_606, "id": expense_id},
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def register_expense(
+    conn: psycopg.Connection,
+    expense_id: int,
+    *,
+    method: str | None,
+    business_date: dt.date | None,
+    forma_pago: str,
+) -> tuple[dict | None, str]:
+    """Turn her staged invoice into the salon's record of what it bought.
+
+    Conditional on the row still being a draft, so a second confirmation of one already registered
+    comes back as None rather than as a second subtraction from the register.
+
+    The duplicate comprobante comes back as a REASON rather than an exception: the constraint is
+    what guarantees it, and the tool path has one branch for "not registered" either way. The
+    `(row, reason)` pair is `_acting`'s shape.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE expenses SET status = 'registered', method = %(method)s, "
+                "                    business_date = %(day)s, forma_pago = %(forma)s "
+                " WHERE id = %(id)s AND status = 'draft' RETURNING *",
+                {"method": method, "day": business_date, "forma": forma_pago, "id": expense_id},
+            )
+            row = cur.fetchone()
+    except psycopg.errors.UniqueViolation:
+        conn.rollback()
+        return None, "already_registered"
+    conn.commit()
+    return row, ""
+
+
+def registered_expense(conn: psycopg.Connection, expense_ref: str) -> dict | None:
+    return fetchone(
+        conn,
+        "SELECT * FROM expenses WHERE expense_ref = %(ref)s AND status = 'registered'",
+        {"ref": expense_ref},
+    )
+
+
+def void_expense(conn: psycopg.Connection, expense_id: int) -> dict | None:
+    """Take one back off the salon's record, and off the register with it.
+
+    A status flip rather than a delete: the money already came off what the drawer should hold, and
+    an owner's entry is not erasable (§15).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE expenses SET status = 'void' "
+            " WHERE id = %(id)s AND status = 'registered' RETURNING *",
+            {"id": expense_id},
+        )
+        row = cur.fetchone()
+    conn.commit()
+    return row
+
+
+def expenses_on(conn: psycopg.Connection, day: dt.date) -> list[dict]:
+    """What the salon spent out of its accounts on `day`, most recent first.
+
+    Shown beside what the register should hold rather than left to be inferred from it: an
+    expectation that is quietly lower is a figure appearing from nowhere (§7).
+    """
+    return fetchall(
+        conn,
+        "SELECT supplier, total_paid, method FROM expenses "
+        " WHERE business_date = %(day)s AND status = 'registered' "
+        " ORDER BY recorded_at DESC",
+        {"day": day},
+    )
+
+
+def expenses_for_period(conn: psycopg.Connection, first: dt.date, last: dt.date) -> list[dict]:
+    """Every registered invoice ISSUED in the period, whether or not it can be a 606 line.
+
+    Both, because the count of what was excluded is part of what she is told: a report quietly
+    missing a third of her invoices is one she would file (§15).
+    """
+    return fetchall(
+        conn,
+        "SELECT * FROM expenses "
+        " WHERE status = 'registered' AND invoice_date BETWEEN %(first)s AND %(last)s "
+        " ORDER BY invoice_date, expense_ref",
+        {"first": first, "last": last},
+    )
