@@ -644,10 +644,35 @@ def test_the_days_figures_land_on_her_and_not_on_the_owner(owner, ctx, make_spec
     tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
     tools.record_payment("efectivo", "300", "0", on_behalf_of="Zenaida", tool_context=owner)
 
-    hers = tools.my_day(on_behalf_of="Zenaida", tool_context=owner)["summary"]
-    assert "Servicios: RD$300.00" in hers
+    about_her = tools.my_day(on_behalf_of="Zenaida", tool_context=owner)["summary"]
+    hers = tools.my_day(tool_context=ctx(her))["summary"]
+    assert "Servicios: RD$300.00" in about_her and "Servicios: RD$300.00" in hers
+    assert "Comisión (40%): RD$120.00" in about_her
     assert "Tu comisión (40%): RD$120.00" in hers
-    assert tools.my_day(tool_context=ctx(her))["summary"] == hers
+
+
+def test_an_owner_asking_about_somebody_is_told_about_her_rather_than_addressed_as_her(
+    owner, make_specialist
+):
+    """She named somebody, so the day is a report. Handed to her in the second person it greets
+    her by that woman's name and calls that commission hers."""
+    make_specialist("nails", full_name="Zenaida Prueba")
+    tools.start_ticket("Laura", on_behalf_of="Zenaida", tool_context=owner)
+    tools.add_service("manicura normal", 1, on_behalf_of="Zenaida", tool_context=owner)
+    tools.record_payment("efectivo", "300", "0", on_behalf_of="Zenaida", tool_context=owner)
+
+    about_her = tools.my_day(on_behalf_of="Zenaida", tool_context=owner)["summary"]
+    assert "Así cerró el día de Zenaida" in about_her
+    assert "Total para ella hoy: RD$120.00" in about_her
+    for said_to_the_reader in ("Hola ", "tu día", "Tu comisión", "te las", "para ti"):
+        assert said_to_the_reader not in about_her, said_to_the_reader
+
+
+def test_an_owner_who_also_works_reads_her_own_day_addressed_to_her(ctx, make_specialist):
+    """Naming herself is not naming somebody else. The comparison is on the resolved id, so the
+    spelling she used cannot decide which voice she gets."""
+    her = make_specialist("wax", full_name="Zenaida Dueña", roles=("owner",))
+    assert "Hola Zenaida" in tools.my_day(on_behalf_of="Zenaida", tool_context=ctx(her))["summary"]
 
 
 def test_a_debt_recorded_by_the_owner_is_owed_by_the_specialist(owner, ctx, make_specialist):
@@ -692,6 +717,33 @@ def test_what_she_owes_meets_her_at_the_next_ticket(working):
     assert tools.start_ticket("Carmen", tool_context=context)["owed_from_before"] == "RD$300.00"
 
 
+def test_the_balance_is_on_the_ticket_whoever_reads_it_next(working):
+    """Announced once at the open it has scrolled away by the time anybody could ask for it. The
+    person charging is the one who needs it, and she is not always the one who opened it."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+
+    opened = tools.start_ticket("Carmen", tool_context=context)
+    assert opened["owed_from_before"] == "RD$300.00"
+    ticket = tools.add_service("manicura normal", 1, tool_context=context)["ticket"]
+    assert "DEUDA ANTERIOR: RD$300.00 (aparte de este total)" in ticket
+    assert "Total: RD$300.00" in ticket, "the debt is beside the total, never inside it"
+    assert "DEUDA ANTERIOR: RD$300.00" in tools.show_ticket(tool_context=context)["ticket"]
+
+
+def test_settling_it_mid_visit_takes_it_off_the_ticket(working):
+    """Read on every render rather than carried from the open, so paying it is visible at once."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+    tools.start_ticket("Carmen", tool_context=context)
+    tools.add_service("manicura normal", 1, tool_context=context)
+
+    tools.settle_client_debt("Carmen", "300", "efectivo", tool_context=context)
+    assert "DEUDA" not in tools.show_ticket(tool_context=context)["ticket"]
+
+
 def test_a_client_who_owes_nothing_is_not_told_about_it(working):
     context, _ = working
     assert "owed_from_before" not in tools.start_ticket("Laura", tool_context=context)
@@ -722,6 +774,33 @@ def test_paying_it_off_later_clears_the_balance(working):
     rest = tools.settle_client_debt("Carmen", "200", "banreservas", tool_context=context)
     assert rest["still_owes"] == "RD$0.00"
     assert "owed_from_before" not in tools.start_ticket("Carmen", tool_context=context)
+
+
+def test_a_client_who_left_owing_still_earns_the_whole_commission(working):
+    """What she earns is what she did, not what the salon collected — §7. The figure is the whole
+    ticket, and the RD$100.00 that did reach the drawer has nothing to do with it."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.record_payment("efectivo", "100", "0", tool_context=context)
+    tools.close_ticket_with_debt(tool_context=context)
+
+    summary = tools.my_day(tool_context=context)["summary"]
+    assert "Servicios: RD$300.00" in summary
+    assert "Tu comisión (40%): RD$120.00" in summary
+    accrued = next(line for line in summary.splitlines() if line.startswith("Acumulado"))
+    assert accrued.endswith("RD$120.00"), "it accrues toward pay-day like any other sale"
+
+
+def test_settling_the_balance_later_does_not_pay_the_commission_twice(working):
+    """The balance is the client's debt rather than a second sale: the day she worked already
+    counted the whole ticket, and settling only ever reaches `client_ledger`."""
+    context, _ = working
+    _ticket_for(context, "Carmen")
+    tools.close_ticket_with_debt(tool_context=context)
+    before = tools.my_day(tool_context=context)["summary"]
+
+    tools.settle_client_debt("Carmen", "300", "efectivo", tool_context=context)
+    assert tools.my_day(tool_context=context)["summary"] == before
 
 
 def test_more_than_she_owes_is_refused_rather_than_held(working):

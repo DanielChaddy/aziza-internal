@@ -84,6 +84,7 @@ def render_ticket(
     gender_label: str | None = None,
     assumed: bool = False,
     worked_by: str | None = None,
+    owed_from_before: Decimal = ZERO,
 ) -> str:
     """The open ticket: who it is for, what was done, what was sold, and what it comes to.
 
@@ -94,6 +95,9 @@ def render_ticket(
     `worked_by` is passed only when somebody OTHER than the person who did the work entered it,
     which is the admin case. Naming her is the same idea as naming the client: the one thing that
     could be wrong is put where the person who knows will read it before money moves.
+
+    `owed_from_before` sits BESIDE the total and never inside it: it is not this sale's money, and
+    `settle_client_debt` is what collects it — §7.
     """
     rows = [f"Cuenta de {client_name}"]
     if worked_by:
@@ -104,6 +108,8 @@ def render_ticket(
     if product_lines:
         rows += ["", "Productos:", *_line_rows(product_lines)]
     rows += ["", f"Total: {rd(total + products_total)}"]
+    if owed_from_before > ZERO:
+        rows += ["", f"DEUDA ANTERIOR: {rd(owed_from_before)} (aparte de este total)"]
     if assumed and gender_label:
         rows += ["", GENDER_ASSUMED_TEXT]
     return "\n".join(rows)
@@ -163,6 +169,7 @@ def render_day(
     owed_loans: Decimal = ZERO,
     period_commission: Decimal = ZERO,
     payday: dt.date | None = None,
+    reader_is_her: bool = True,
 ) -> str:
     """What the specialist made, and the arithmetic laid out so they can check it themselves.
 
@@ -175,20 +182,26 @@ def render_day(
     shown whole and NOT subtracted, because the salon lets her settle it whenever she likes and
     taking it off would state a deduction nobody has made — split in two, because owing for a
     drink and owing cash do not feel the same to be told you owe.
+
+    `reader_is_her` is false when an owner asked about somebody else: the same figures in the same
+    order, told ABOUT her rather than handed to her — §7. The third person never says "su" before
+    these nouns, which docs/BRAND_VOICE.md §1 reads as usted.
     """
     rows = [
-        f"Hola {specialist_name}, así cerró tu día del {spanish_date(day)}.",
+        f"Hola {specialist_name}, así cerró tu día del {spanish_date(day)}."
+        if reader_is_her
+        else f"Así cerró el día de {specialist_name}, {spanish_date(day)}.",
         "",
         f"Servicios: {rd(services_total)}",
-        f"Tu comisión ({commission_pct}%): {rd(commission)}",
-        f"Propinas (te las entregamos hoy): {rd(tips)}",
+        f"{'Tu comisión' if reader_is_her else 'Comisión'} ({commission_pct}%): {rd(commission)}",
+        f"Propinas ({'te' if reader_is_her else 'se'} las entregamos hoy): {rd(tips)}",
     ]
     if products_total > ZERO:
         rows.append(f"Productos vendidos: {rd(products_total)} (no generan comisión)")
-    rows += ["", f"Total para ti hoy: {rd(commission + tips)}"]
+    rows += ["", f"Total para {'ti' if reader_is_her else 'ella'} hoy: {rd(commission + tips)}"]
 
     if owed_products > ZERO or owed_loans > ZERO:
-        rows += ["", "Lo que debes al salón:"]
+        rows += ["", f"Lo que {'debes' if reader_is_her else 'debe'} al salón:"]
         if owed_products > ZERO:
             rows.append(f"• Consumo: {rd(owed_products)}")
         if owed_loans > ZERO:

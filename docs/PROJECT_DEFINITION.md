@@ -193,10 +193,20 @@ teaches people to ignore variances.
 **A client can pay less, and then the ticket CLOSES.** One open ticket per specialist is what
 makes "my current ticket" mean anything, so a client who leaves owing would otherwise stop her
 serving anybody else. The sale closes `partial`, the balance goes to `client_ledger` against the
-person rather than the words on the ticket, and it is shown again the moment somebody opens a
-ticket in her name — which is the one moment anybody is standing in front of her. `clients` is
+person rather than the words on the ticket, and it is on **every** render of the next ticket in
+her name — beside the total and never inside it, because it is not that sale's money and
+`settle_client_debt` is what collects it. Every render rather than the open alone: whoever charges
+is not always whoever opened the ticket, and a balance announced once has stopped being visible by
+the time anybody could ask for it. `clients` is
 matched on the folded name, so two people who share one share a balance until something asks for
 a phone; the column is there and the ambiguity is written down rather than discovered.
+
+**A `partial` sale is the specialist's work in full and pays her commission in full.** What she
+earns is measured by what she did, not by what the salon managed to collect — chasing the balance
+is the salon's job, and a commission that waited on it would put her pay at the mercy of whether
+a client comes back. `queries.WORKED_STATUSES` is that rule, and the whole `services_total` enters
+her day and her pay period on the day she worked; the later settlement reaches `client_ledger`
+alone, so nothing is counted twice.
 
 **A client can pay more, and what happens then is decided by the method, not by the model.** Cash
 left her hand as notes and the difference is expected back, so it is change: recorded in
@@ -213,6 +223,12 @@ commission with its rate beside it, tips, and the total — so the arithmetic ca
 hand. A figure that appears from nowhere is the kind people dispute later. Products sold and the
 whole outstanding balance are reported beside them: the balance is shown rather than subtracted,
 because taking it off today's figure would state a deduction nobody has made.
+
+**An owner who asked about somebody is told about her, not handed her message.** The two differ
+only in person: one template renders both, because two would drift on the layout while the
+figures stayed identical, and a day the reader is greeted by somebody else's name over is a total
+she has every reason to read as her own. The third person never says *su* before one of those
+figures — docs/BRAND_VOICE.md §1 reads that as *usted*.
 
 ## §8 · The working day, and its end
 
