@@ -21,6 +21,7 @@ agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@
 agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-evalkit-v0.1.0#subdirectory=packages/agent-evalkit
 agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-transcription-v0.2.0#subdirectory=packages/transcription
 agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@agent-webview-v0.1.0#subdirectory=packages/webview
+fiscal-do @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@fiscal-do-v0.1.0#subdirectory=packages/fiscal-do
 
 # The framework, with the [db] extra that pulls SQLAlchemy for DatabaseSessionService.
 google-adk[db]==2.3.0

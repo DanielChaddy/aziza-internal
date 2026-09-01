@@ -9,8 +9,9 @@ import inspect
 from decimal import Decimal
 
 import pytest
+from fiscal_do import invoice as fiscal
 
-from aziza_adk import queries, receipts, session, tools
+from aziza_adk import money, queries, receipts, session, tools
 from aziza_adk.money import ZERO
 from tests.conftest import KNOWN_CLIENTS, service_named
 
@@ -122,6 +123,22 @@ def test_every_way_of_saying_a_method_reaches_the_same_column_value(spoken, cano
 
 
 # --- [3] A whole sale, through the real schema ---------------------------------------------
+
+
+def test_the_way_she_paid_becomes_a_forma_de_pago():
+    """LOSSY, and the salon's: an account name cannot say whether the money moved as a transfer
+    or on a card, and the 606 distinguishes them (§15)."""
+    assert tools.FORMA_PAGO["cash"] == "01"
+    assert set(tools.FORMA_PAGO) == {"cash", "banreservas", "bhd"}
+
+
+def test_the_large_invoice_ceiling_is_the_salons_and_not_the_packages():
+    """`fiscal_do` holds no ceiling of its own — one filer's ordinary week is another's chair, so
+    it takes one and refuses to default it. agent-platform README.md, "Where a thing lives"."""
+    assert not hasattr(fiscal, "LARGE_EXPENSE_THRESHOLD")
+    supplied = inspect.signature(fiscal.check).parameters["large_amount_over"]
+    assert supplied.default is inspect.Parameter.empty
+    assert money.LARGE_EXPENSE_THRESHOLD == Decimal("25000.00")
 
 
 def test_a_ticket_opens_and_shows_the_catalog_price(working):

@@ -24,6 +24,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from conversation_core import dates, fold
+from fiscal_do import invoice as fiscal
+from fiscal_do import report_606
 from google.adk.tools import ToolContext
 
 from aziza_adk import (
@@ -32,7 +34,6 @@ from aziza_adk import (
     catalog_data,
     clients,
     config,
-    fiscal,
     money,
     names,
     pay,
@@ -40,7 +41,6 @@ from aziza_adk import (
     receipts,
     reports,
     session,
-    six_oh_six,
     staff,
 )
 from aziza_adk.money import ZERO
@@ -334,6 +334,11 @@ _EXPENSE_CATEGORIES = {
     "seguro": "11",
     "seguros": "11",
 }
+
+#: Which `Forma de Pago` each of the salon's accounts becomes. LOSSY, and deliberately stored on
+#: the row rather than derived at render time: a bank name cannot say whether the money moved as a
+#: transfer or on a card, and the 606 distinguishes them (§15).
+FORMA_PAGO = {"cash": "01", "banreservas": "02", "bhd": "02"}
 
 #: Which column of a staged invoice she means. Named rather than inferred, and resolved against
 #: this table rather than interpolated: the value reaches a SET clause.
@@ -1545,6 +1550,15 @@ def _invoice_from(**args: str) -> tuple[fiscal.Invoice | None, dict | None]:
 _MID_CORRECTION = frozenset({"total_mismatch"})
 
 
+def _checked(invoice: fiscal.Invoice) -> tuple:
+    """Every problem this invoice has, against today and against what THIS salon calls a lot.
+
+    The threshold is the salon's rather than the norm's, so `fiscal_do` takes it as a parameter
+    and this is the one place it is supplied — docs/PROJECT_DEFINITION.md §15.
+    """
+    return fiscal.check(invoice, today=_today(), large_amount_over=money.LARGE_EXPENSE_THRESHOLD)
+
+
 def _refused_invoice(
     invoice: fiscal.Invoice, problems, *, mid_correction: bool = False
 ) -> dict | None:
@@ -1661,7 +1675,7 @@ def draft_expense(
     )
     if refused is not None:
         return refused
-    problems = fiscal.check(invoice, today=_today())
+    problems = _checked(invoice)
     if (refused := _refused_invoice(invoice, problems)) is not None:
         return refused
 
@@ -1728,7 +1742,7 @@ def amend_expense(field: str, value: str, tool_context: ToolContext = None) -> d
             corrected, refused = _corrected(row, column, value)
             if refused is not None:
                 return refused
-            problems = fiscal.check(corrected, today=_today())
+            problems = _checked(corrected)
             if (refused := _refused_invoice(corrected, problems, mid_correction=True)) is not None:
                 return refused
 
@@ -1848,9 +1862,7 @@ def register_expense(
             # Re-checked here rather than trusted from the draft: an amendment is allowed to leave
             # the parts and the total momentarily inconsistent, and this is where that stops.
             staged = _staged(row)
-            if (
-                refused := _refused_invoice(staged, fiscal.check(staged, today=_today()))
-            ) is not None:
+            if (refused := _refused_invoice(staged, _checked(staged))) is not None:
                 return refused
             # A closed day's expectation is a frozen snapshot on purpose, so nothing may reach
             # back and lower it — §7.
@@ -1862,7 +1874,7 @@ def register_expense(
                 row["id"],
                 method=canonical,
                 business_date=day,
-                forma_pago=fiscal.FORMA_PAGO.get(canonical or "", "04"),
+                forma_pago=FORMA_PAGO.get(canonical or "", "04"),
             )
             if reason:
                 return {"error": reason, "message": ALREADY_REGISTERED_MSG}
@@ -1939,7 +1951,7 @@ def month_606(month: str = "", tool_context: ToolContext = None) -> dict:
         with queries.connect() as conn:
             last = asked.replace(day=calendar.monthrange(asked.year, asked.month)[1])
             rows = queries.expenses_for_period(conn, asked, last)
-        left_out = six_oh_six.excluded(rows)
+        left_out = report_606.excluded(rows)
         return {
             "summary": receipts.render_606_summary(
                 f"{asked:%Y-%m}", rows_in=len(rows) - left_out, rows_out=left_out, url=url
