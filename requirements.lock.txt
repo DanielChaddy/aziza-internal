@@ -5,14 +5,15 @@
 # unit of deploy and rollback, so `helm rollback` to revision N only means something if revision N
 # pins an exact package set.
 #
-# THE SEVEN agent-platform PACKAGES BELOW WERE NOT PART OF THE RESOLVE, and that is safe for one
+# THE EIGHT agent-platform PACKAGES BELOW WERE NOT PART OF THE RESOLVE, and that is safe for one
 # specific reason: every dependency they declare is PUBLIC (agent-adk -> google-adk[db];
 # channel-telegram -> fastapi, httpx, conversation-core; agent-telemetry -> four opentelemetry-*;
 # agent-transcription -> google-genai, which google-adk already constrains; agent-webview ->
-# fastapi; conversation-core and agent-evalkit declare none), and all of those constraints were in
+# fastapi; fiscal-do -> conversation-core, which is itself pinned below; conversation-core and
+# agent-evalkit declare none), and all of those constraints were in
 # the resolve input — the four opentelemetry-* by hand, since requirements.txt names none of them
 # and only agent-telemetry asks for them. So there is nothing private for a resolve to discover and
-# the closure below is what pip would have produced with the credential. If any of the seven ever
+# the closure below is what pip would have produced with the credential. If any of the eight ever
 # declares a dependency that is not already here, this reasoning stops holding and the lock must be
 # regenerated WITH the credential — read agent-platform's packages/*/pyproject.toml before assuming
 # it still holds.
@@ -22,7 +23,7 @@
 # names an artifact. The trailing tag comment is what tests/test_chart.py holds against
 # requirements.txt — the two files can otherwise name different versions and every build succeeds.
 #
-# Regenerate after editing requirements.txt, or after any of the seven pins moves. Must be
+# Regenerate after editing requirements.txt, or after any of the eight pins moves. Must be
 # linux/amd64 — the cluster nodes are amd64. No credential is needed:
 #   grep -vE '^\s*#|^\s*$' requirements.txt | grep -v 'git+https' > /tmp/r.txt
 #   # then append the constraints the seven packages declare, from their pyproject.toml files
@@ -43,6 +44,7 @@ agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platf
 agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@d8528c1fc1bae22231298800e20c5c66cb7e330e#subdirectory=packages/webview  # agent-webview-v0.1.0
 channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@5caf49650794de7c322f39e9b9c55831f16e5999#subdirectory=packages/channel-telegram  # channel-telegram-v0.3.0
 conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@a2e58f0386a0830864885c9a3be7638a9d969c2c#subdirectory=packages/conversation-core  # conversation-core-v0.2.1
+fiscal-do @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@445107078149df05ac5a48b0d647bd0a19c6d97c#subdirectory=packages/fiscal-do  # fiscal-do-v0.1.0
 
 # --- the resolved closure ---
 aiosqlite==0.22.1

@@ -14,7 +14,7 @@ This is the operations runbook. For the local development stack see the reposito
 | TLS | `cert-manager` ClusterIssuer `letsencrypt-prod` (HTTP-01) |
 | Registry | `ghcr.io/danielchaddy/aziza-internal`, pull secret `ghcr` — created here, because GHCR has no registry integration on this cluster |
 | Database | DO Managed Postgres `dev-db-pgsql` (sfo2, PG 18) — databases `aziza` and `aziza_sessions` |
-| Telemetry | The app **pushes** OTLP to the collector in the `observability` namespace |
+| Telemetry | None. `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so nothing is pushed to the `observability` collector and `kubectl logs` is the whole story |
 
 **One workload and one scheduled job.** `sts/aziza` runs the Telegram webhook on the image's
 default `CMD`; `cronjob/aziza-summary` runs `scripts/daily_summary.py` on the same image. Nothing

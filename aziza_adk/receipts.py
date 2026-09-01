@@ -397,8 +397,9 @@ def render_register_prompt(
     return "\n".join(rows)
 
 
-#: What each notice on a staged invoice says. Keyed by `fiscal.Problem.code`, so a notice added
-#: there without a sentence here is a KeyError in a test rather than a silence in a turn.
+#: What each notice on a staged invoice says. Keyed by `fiscal_do.invoice.Problem.code`, so
+#: a notice added there without a sentence here is a KeyError in a test rather than a silence
+#: in a turn.
 EXPENSE_NOTICE_TEXT = {
     "total_mismatch": "Las partidas ya no suman el total. Corrígeme el total también.",
     "outside_606": "Sin RNC ni NCF, así que la registro pero no entra en el 606.",

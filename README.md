@@ -173,13 +173,14 @@ repository's `README.md` and it is the owner — this table says only what *this
 | `conversation-core` | the env primitives, the accent fold, the literal-date block and the context-state reader |
 | `agent-adk` | the factory that builds the graph and puts the input screen on it |
 | `channel-telegram` | the whole Telegram transport |
-| `agent-telemetry` | the OTLP provider — one call in `channel.py`, and ADK's own spans stop being discarded |
+| `agent-telemetry` | the root logging configuration — one call in `channel.py`, and the OTLP provider behind it if an endpoint is ever set |
 | `agent-evalkit` | the multi-run aggregate the eval reports |
 | `agent-transcription` | the model call that turns a voice note into the text a turn can act on |
 | `agent-webview` | the signed short-lived link the QR encodes, and the one HTML escape |
 
 `agent-telemetry` installs **nothing** with `OTEL_EXPORTER_OTLP_ENDPOINT` unset, which is how
-`adk web`, the eval and `pytest` all run.
+`adk web`, the eval, `pytest` and the deployment all run — [`deploy/helm/README.md`](deploy/helm/README.md)
+owns the deployed state.
 
 ## Environment
 

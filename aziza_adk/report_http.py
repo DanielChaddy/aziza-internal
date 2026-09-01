@@ -19,8 +19,9 @@ import time
 from agent_webview import tokens
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
+from fiscal_do import report_606
 
-from aziza_adk import config, queries, reports, six_oh_six
+from aziza_adk import config, queries, reports
 
 log = logging.getLogger("aziza_adk.report_http")
 
@@ -44,7 +45,7 @@ def _body(month: dt.date) -> str:
     last = first.replace(day=calendar.monthrange(first.year, first.month)[1])
     with queries.connect() as conn:
         rows = queries.expenses_for_period(conn, first, last)
-    return six_oh_six.render(config.SALON_RNC, first, rows)
+    return report_606.render(config.SALON_RNC, first, rows)
 
 
 def _refused(result: tokens.Rejected, token: str) -> PlainTextResponse:

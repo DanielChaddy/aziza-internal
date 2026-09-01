@@ -596,8 +596,11 @@ delete, and refused into a day already closed for the reason below.
 ### What holds a misread still
 
 The model reads figures off a photograph, so a confirmation she skims is not a control.
-`aziza_adk/fiscal.py` holds what is decidable from the values alone — no database, no model and no
-clock, so the day a date is judged against is a parameter as it is in `hours.py`.
+`agent-platform`'s `packages/fiscal-do/` holds what is decidable from the values alone — no
+database, no model and no clock, so the day a date is judged against is a parameter as it is in
+`hours.py`. What the norm does not fix stays here: what size of invoice is worth a second look,
+which of the salon's methods becomes which `Forma de Pago`, and which spoken word means which
+category. The package takes the first as an argument and never sees the other two.
 
 Refused: the parts not adding up to what she paid, an id that is neither nine digits nor eleven, a
 comprobante that is not one of the shapes, a date in the future or over a year old, and a supplier
@@ -653,10 +656,10 @@ moved, and blocking the count on a photograph she forgot about is the wrong trad
 
 ### The 606, and what is not verified about it
 
-`aziza_adk/six_oh_six.py` renders one month as the pipe-delimited file DGII is sent. It is the one
-render here that does not use `money.rd`: a machine reads it and would reject `RD$1,000.00`. For the
-same reason nothing in it is named `*_TEXT`, which would put a pipe character in front of the
-register sweep.
+`agent-platform`'s `fiscal_do.report_606` renders one month as the pipe-delimited file DGII is
+sent. Nothing in it uses `money.rd`: a machine reads it and would reject `RD$1,000.00`. Its `Line`
+is the package's contract rather than this schema, so `queries` hands it rows and the mapping stays
+here.
 
 `ITBIS por Adelantar` is derived from the columns it is made of rather than stored at zero, because
 a zero understates the credit the salon is owed.

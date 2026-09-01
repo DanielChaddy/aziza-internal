@@ -20,6 +20,11 @@ from conversation_core import money as shared_money
 CENTS = Decimal("0.01")
 ZERO = Decimal("0.00")
 
+#: More than an ordinary day's takings, which is what makes it worth a second look rather than a
+#: refusal: a salon really does buy a chair, and a ceiling that refused one would be raised until
+#: it refused nothing. `fiscal_do` takes it as a parameter — docs/PROJECT_DEFINITION.md §15.
+LARGE_EXPENSE_THRESHOLD = Decimal("25000.00")
+
 
 def money(raw: object) -> Decimal:
     """`raw` as an amount, rounded to cents. Raises ValueError on anything that is not one.
