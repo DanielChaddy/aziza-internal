@@ -407,10 +407,15 @@ The eval is the second layer, over the wording and the shape of a turn, and is n
 
 ## §11 · What is open
 
-This repository's GitHub issues, and nothing here keeps a second copy. The one exception is work
-that spans the platform and its consumers: an item ordering a package's tag against this
-repository's pin cannot live where neither the package nor the sibling is, so it sits on the board
-the siblings use.
+This repository's GitHub issues, and nothing here keeps a second copy. **Nothing of this
+repository's goes on the board the siblings use**, and that holds for work waiting on the platform
+as much as for work that is only ours.
+
+Work spanning the platform and a consumer is two items rather than one, because its halves are
+owned in different places: tagging a package is the platform's work and sits on the platform's
+board, and moving this repository's pin is ours and is an issue here, naming the tag it waits for.
+Neither tracker holds a relation into the other, so that naming is what carries the ordering — and
+an issue that does not name its tag is unstartable without asking.
 
 ## §12 · The line
 
