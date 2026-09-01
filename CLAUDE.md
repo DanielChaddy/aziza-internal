@@ -2,8 +2,8 @@
 
 Guidance for working in this repository. The shared rules — tiers, documents, naming, comments —
 are `agent-platform/CLAUDE.md` and are not repeated here. This file holds what is true of **this**
-repository only. Open items are this repository's own GitHub issues, except the ones that order a
-platform tag against this repository's pin — docs/PROJECT_DEFINITION.md §11 owns that distinction.
+repository only. Open items are this repository's own GitHub issues, without exception —
+docs/PROJECT_DEFINITION.md §11 owns what that means for work that waits on the platform.
 
 ## What this is
 
