@@ -195,11 +195,11 @@ class SalonHandler(TurnHandler):
     """One turn, by shape. The channel owns everything before and after these methods."""
 
     async def on_text(self, msg) -> str | None:
-        who = await specialist_for(msg.sender)
+        who = await specialist_for(msg.sender.value)
         if who is None:
-            logger.info("turn refused: sender %s is not a registered specialist", msg.sender)
+            logger.info("turn refused: sender %s is not a registered specialist", msg.sender.value)
             return NOT_REGISTERED_TEXT
-        return await run_turn(msg.sender, who, msg.text or "")
+        return await run_turn(msg.sender.value, who, msg.text or "")
 
     async def on_media(self, msg) -> str | None:
         """A photographed supplier invoice, which is an owner's path and nobody else's.
@@ -210,12 +210,12 @@ class SalonHandler(TurnHandler):
         """
         # TODO: `agent_adk.latest_user_text` reads text parts, so text inside an image reaches the
         # model unscreened. Contained structurally rather than by a guard — see §15.
-        who = await specialist_for(msg.sender)
+        who = await specialist_for(msg.sender.value)
         if who is None:
-            logger.info("turn refused: sender %s is not a registered specialist", msg.sender)
+            logger.info("turn refused: sender %s is not a registered specialist", msg.sender.value)
             return NOT_REGISTERED_TEXT
         if session.OWNER not in (who.get("roles") or ()):
-            logger.info("photo refused: sender %s is not an owner", msg.sender)
+            logger.info("photo refused: sender %s is not an owner", msg.sender.value)
             return MEDIA_REFUSED_TEXT
 
         fetched = await media.image_bytes(msg)
@@ -224,7 +224,7 @@ class SalonHandler(TurnHandler):
         data, mime = fetched
         try:
             return await run_turn(
-                msg.sender,
+                msg.sender.value,
                 who,
                 msg.caption or "",
                 image=data,

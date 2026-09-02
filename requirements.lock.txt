@@ -42,8 +42,9 @@ agent-evalkit @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@fe
 agent-telemetry @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@febf51550de5c73432d9a52e25bba6283654c729#subdirectory=packages/agent-telemetry  # agent-telemetry-v0.1.0
 agent-transcription @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@8488d2b4af3753718c6698f944735d6edd422a13#subdirectory=packages/transcription  # agent-transcription-v0.2.0
 agent-webview @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@d8528c1fc1bae22231298800e20c5c66cb7e330e#subdirectory=packages/webview  # agent-webview-v0.1.0
-channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@5caf49650794de7c322f39e9b9c55831f16e5999#subdirectory=packages/channel-telegram  # channel-telegram-v0.3.0
-conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@6692a108a90b69d6721ed19a1e560d928a98e0d1#subdirectory=packages/conversation-core  # conversation-core-v0.2.2
+channel-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@ce698ec445a55cfd4c45876c2ceb46976bdc9024#subdirectory=packages/channel-core  # channel-core-v0.1.0
+channel-telegram @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@ce698ec445a55cfd4c45876c2ceb46976bdc9024#subdirectory=packages/channel-telegram  # channel-telegram-v0.5.0
+conversation-core @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@ce698ec445a55cfd4c45876c2ceb46976bdc9024#subdirectory=packages/conversation-core  # conversation-core-v0.3.0
 fiscal-do @ git+https://dev.azure.com/mdtx/Assistants/_git/agent-platform@445107078149df05ac5a48b0d647bd0a19c6d97c#subdirectory=packages/fiscal-do  # fiscal-do-v0.1.0
 
 # --- the resolved closure ---
