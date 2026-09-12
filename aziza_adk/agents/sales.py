@@ -49,6 +49,7 @@ SALES_SPEC = AgentSpec(
         tools.call_next,
         tools.who_is_waiting,
         tools.remove_from_queue,
+        tools.report_shortage,
     ),
     before_tool=guards.before_tool_guard,
     after_tool=guards.log_after_tool,

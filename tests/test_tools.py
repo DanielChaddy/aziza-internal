@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 from fiscal_do import invoice as fiscal
 
-from aziza_adk import money, queries, receipts, session, tools
+from aziza_adk import config, money, queries, receipts, session, tools
 from aziza_adk.money import ZERO
 from tests.conftest import KNOWN_CLIENTS, service_named
 
@@ -47,6 +47,7 @@ LEGS = service_named("Piernas completas")  # wax,   RD$850 F / RD$1,400 M
         lambda c: tools.register_expense("efectivo", tool_context=c),
         lambda c: tools.void_expense("exp-1", tool_context=c),
         lambda c: tools.month_606(tool_context=c),
+        lambda c: tools.report_shortage("acetona", tool_context=c),
     ],
 )
 def test_every_tool_refuses_a_session_with_no_specialist(ctx, call):
@@ -1960,3 +1961,138 @@ def test_figures_that_do_not_add_up_never_reach_a_draft(conn, sentinel, owner_wi
     assert answer["error"] == "total_mismatch"
     assert "RD$1,180.00" in answer["message"]
     assert "RD$1,000.00" in answer["message"]
+
+
+# --- [21] What the salon has run out of ---------------------------------------------------
+
+
+@pytest.fixture
+def stocked(conn):
+    """One supply the salon has listed, removed again however the case ends."""
+    ref = "sup-sentinel-1"
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO supplies (supply_ref, name, aliases) "
+            "VALUES (%(r)s, 'Acetona Sentinel', 'quitaesmalte sentinel') "
+            "ON CONFLICT (supply_ref) DO UPDATE SET active = TRUE",
+            {"r": ref},
+        )
+    yield ref
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM supply_requests WHERE supply_id IN "
+            "  (SELECT id FROM supplies WHERE supply_ref = %(r)s)",
+            {"r": ref},
+        )
+        cur.execute("DELETE FROM supplies WHERE supply_ref = %(r)s", {"r": ref})
+
+
+def _reported(conn, specialist_id: int) -> list[dict]:
+    return queries.fetchall(
+        conn,
+        "SELECT said, note, supply_id, photo_file_id, photo_mime FROM supply_requests "
+        " WHERE reported_by = %(by)s ORDER BY id",
+        {"by": specialist_id},
+    )
+
+
+def test_anybody_may_say_something_is_running_out(conn, sentinel, working):
+    """Whoever reached for it is who noticed, so this is not an owner's tool — and it is absent
+    from the hours as well, because a shortage is noticed when it is noticed (§16)."""
+    context, who = working
+    assert tools.report_shortage("papel de camilla", tool_context=context)["reported"] is True
+    assert _reported(conn, who["id"])[0]["said"] == "papel de camilla"
+    assert "report_shortage" not in tools.OWNER_TOOL_NAMES
+    assert "report_shortage" not in tools.AFTER_HOURS_TOOL_NAMES
+
+
+def test_a_thing_the_salon_lists_is_recorded_against_that_row(conn, sentinel, working, stocked):
+    context, who = working
+    answer = tools.report_shortage("quitaesmalte sentinel", tool_context=context)
+    assert (answer["item"], answer["listed"]) == ("Acetona Sentinel", True)
+    assert _reported(conn, who["id"])[0]["supply_id"] is not None
+
+
+def test_a_thing_the_salon_does_not_list_is_recorded_in_her_own_words(conn, sentinel, working):
+    """Recorded rather than refused: a shortage nobody seeded is still a shortage, and refusing
+    it is the failure "tell me what's missing" exists to prevent (§16)."""
+    context, who = working
+    answer = tools.report_shortage("papel de camilla", tool_context=context)
+    assert (answer["item"], answer["listed"]) == ("papel de camilla", False)
+    assert _reported(conn, who["id"])[0]["supply_id"] is None
+
+
+def test_two_things_of_one_name_are_a_question_rather_than_a_pick(conn, sentinel, working):
+    """The same refusal a service gets, for the same reason: buying the wrong one of two is a
+    trip wasted, and one more question is cheaper."""
+    context, _ = working
+    refs = ("sup-sentinel-a", "sup-sentinel-b")
+    with conn.cursor() as cur:
+        for ref, name in zip(refs, ("Cera tibia sentinel", "Cera caliente sentinel")):
+            cur.execute(
+                "INSERT INTO supplies (supply_ref, name, aliases) VALUES (%s, %s, '') "
+                "ON CONFLICT (supply_ref) DO UPDATE SET active = TRUE",
+                (ref, name),
+            )
+    try:
+        answer = tools.report_shortage("cera", tool_context=context)
+        assert answer["error"] == "ambiguous_supply"
+        assert len(answer["options"]) == 2
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM supplies WHERE supply_ref = ANY(%s)", (list(refs),))
+
+
+def test_a_picture_with_nothing_named_is_a_question(conn, sentinel, working):
+    context, _ = working
+    assert tools.report_shortage("   ", tool_context=context)["error"] == "need_item"
+
+
+def test_the_handle_on_her_photograph_is_never_an_argument(conn, sentinel, working):
+    """THE property §15 already rests on, reaching the other tool that uses a picture: a model
+    asked for a handle produces a plausible one, so there is no parameter carrying it."""
+    taken = set(inspect.signature(tools.report_shortage).parameters)
+    assert taken == {"item", "note", "tool_context"}
+
+
+def test_a_photograph_she_just_sent_rides_along_with_what_she_says(conn, sentinel, working):
+    context, who = working
+    session.remember_photo(context, "shelf-handle-1", "image/jpeg", tools.now().isoformat())
+    answer = tools.report_shortage("algodón", "queda medio paquete", tool_context=context)
+    assert answer["with_photo"] is True
+    row = _reported(conn, who["id"])[0]
+    assert (row["photo_file_id"], row["photo_mime"], row["note"]) == (
+        "shelf-handle-1",
+        "image/jpeg",
+        "queda medio paquete",
+    )
+
+
+def test_a_photograph_nobody_ever_named_stops_riding_along(conn, sentinel, working):
+    """The handle outlives its turn on purpose — a picture sent with nothing said is named by the
+    NEXT message — so what has to be stopped is the one that was never answered at all (§16)."""
+    context, who = working
+    stale = tools.now() - dt.timedelta(minutes=config.SHORTAGE_PHOTO_TTL_MINUTES + 1)
+    session.remember_photo(context, "shelf-handle-1", "image/jpeg", stale.isoformat())
+    assert tools.report_shortage("algodón", tool_context=context)["with_photo"] is False
+    assert _reported(conn, who["id"])[0]["photo_file_id"] == ""
+
+
+def test_a_handle_with_no_stamp_at_all_attaches_nothing(conn, sentinel, working):
+    """Fails closed: a session written by something that did not stamp it is unreadable, and an
+    unreadable age must not read as fresh."""
+    context, who = working
+    session.remember_photo(context, "shelf-handle-1", "image/jpeg")
+    assert tools.report_shortage("algodón", tool_context=context)["with_photo"] is False
+
+
+def test_one_photograph_answers_two_things_said_in_one_breath(conn, sentinel, working):
+    """Bounded by age rather than consumed on use, because a shelf holds more than one thing."""
+    context, who = working
+    session.remember_photo(context, "shelf-handle-1", "image/jpeg", tools.now().isoformat())
+    tools.report_shortage("algodón", tool_context=context)
+    tools.report_shortage("guantes", tool_context=context)
+    assert [row["photo_file_id"] for row in _reported(conn, who["id"])] == [
+        "shelf-handle-1",
+        "shelf-handle-1",
+    ]

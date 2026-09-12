@@ -7,6 +7,7 @@ persists this state as JSON.
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 from typing import Any
 
@@ -131,9 +132,34 @@ def photo(context: Any) -> str:
 
     Written at the edge and never an argument: a model asked for a handle produces a plausible
     one, and a tool that accepted it could be called on a typed description of an invoice (§15).
+
+    ONE handle for two readers — §15 and §16 — and which of them a picture was for is decided by
+    the tool she reaches rather than by a second slot. Whether its BYTES went to the model is the
+    channel's question and is answered there.
     """
     return str(state.mapping(context, PHOTO_KEY).get("file_id") or "")
 
 
-def remember_photo(context: Any, file_id: str) -> None:
-    _write(context, PHOTO_KEY, {"file_id": file_id})
+def photo_mime(context: Any) -> str:
+    """What that picture arrived as, or "".
+
+    Kept because Telegram's file lookup does not report a type — it answers with a path and a
+    size — so a handle stored without one cannot be fetched again later.
+    """
+    return str(state.mapping(context, PHOTO_KEY).get("mime") or "")
+
+
+def photo_at(context: Any) -> dt.datetime | None:
+    """When that picture arrived, or None when nothing readable is stored.
+
+    Fails closed by construction: a caller bounding how old a photo it will use treats None as
+    unusable, so an unreadable stamp attaches nothing rather than everything.
+    """
+    try:
+        return dt.datetime.fromisoformat(str(state.mapping(context, PHOTO_KEY).get("at") or ""))
+    except ValueError:
+        return None
+
+
+def remember_photo(context: Any, file_id: str, mime: str = "", at: str = "") -> None:
+    _write(context, PHOTO_KEY, {"file_id": file_id, "mime": mime, "at": at})

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Apply the schema, load the salon's catalog, and register its people. Idempotent.
 
-Three datasets, and the split is the point. `aziza_adk/catalog_data.py` is what the salon really
-sells and charges. `aziza_adk/staff_data.py` is the people who really work here — and a Telegram
-id there is a credential, since an id the database does not hold reaches nothing. Only
-`aziza_adk/demo_data.py` is invented, and it is seeded ONLY when asked for: a real database has no
-business carrying three people who do not exist.
+Four datasets, and the split is the point. `aziza_adk/catalog_data.py` is what the salon really
+sells and charges, and `aziza_adk/supplies_data.py` what it really buys for itself.
+`aziza_adk/staff_data.py` is the people who really work here — and a Telegram id there is a
+credential, since an id the database does not hold reaches nothing. Only `aziza_adk/demo_data.py`
+is invented, and it is seeded ONLY when asked for: a real database has no business carrying three
+people who do not exist.
 
-All three are read by the tests too, so seeding and asserting cannot disagree.
+All four are read by the tests too, so seeding and asserting cannot disagree.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from aziza_adk import catalog_data, demo_data, queries, staff_data  # noqa: E402
+from aziza_adk import catalog_data, demo_data, queries, staff_data, supplies_data  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,6 +71,14 @@ def main(argv: list[str] | None = None) -> int:
                     "  aliases = EXCLUDED.aliases, active = TRUE",
                     row,
                 )
+            for row in supplies_data.SUPPLIES:
+                cur.execute(
+                    "INSERT INTO supplies (supply_ref, name, aliases) "
+                    "VALUES (%(supply_ref)s, %(name)s, %(aliases)s) "
+                    "ON CONFLICT (supply_ref) DO UPDATE SET "
+                    "  name = EXCLUDED.name, aliases = EXCLUDED.aliases, active = TRUE",
+                    row,
+                )
             for person in people:
                 cur.execute(
                     "INSERT INTO specialists "
@@ -114,12 +123,14 @@ def main(argv: list[str] | None = None) -> int:
             conn,
             [row["product_ref"] for row in catalog_data.PRODUCTS],
             [row["service_ref"] for row in catalog_data.SERVICES],
+            [row["supply_ref"] for row in supplies_data.SUPPLIES],
         )
         conn.commit()
 
     demo = len(people) - len(staff_data.STAFF)
     print(
         f"seeded {len(catalog_data.SERVICES)} services, {len(catalog_data.PRODUCTS)} products, "
+        f"{len(supplies_data.SUPPLIES)} supplies, "
         f"{len(catalog_data.DISCIPLINES)} disciplines, {len(staff_data.STAFF)} staff"
         + (f", {demo} demo specialists" if demo else "")
         + (f"; stood down {stood_down} no longer in the dataset" if stood_down else "")

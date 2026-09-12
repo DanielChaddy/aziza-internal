@@ -57,6 +57,13 @@ COMMISSION_PCT: int = _int("COMMISSION_PCT", 40)
 # simply not found and she sends the photo again. See docs/PROJECT_DEFINITION.md §15.
 EXPENSE_DRAFT_TTL_MINUTES: int = _int("EXPENSE_DRAFT_TTL_MINUTES", 15)
 
+# --- What the salon needs ---------------------------------------------------
+# How long a photograph stays attachable to a shortage. The handle outlives the turn on purpose —
+# a picture sent with nothing said is named by the NEXT message — but one never answered would
+# otherwise ride along on a report days later, showing an owner a shelf nobody meant.
+# See docs/PROJECT_DEFINITION.md §16.
+SHORTAGE_PHOTO_TTL_MINUTES: int = _int("SHORTAGE_PHOTO_TTL_MINUTES", 30)
+
 # --- Serving limits ---------------------------------------------------------
 # Hard cap on ONE turn. The Gemini SSE stream has no timeout of its own — google-genai sets
 # timeout=None — so a server that stops emitting chunks parks the turn forever and the

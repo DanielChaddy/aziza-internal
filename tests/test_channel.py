@@ -202,19 +202,50 @@ def test_a_voice_note_that_yields_no_words_says_so_rather_than_claiming_speech_i
 # --- [3] Everything else the transport can hand over --------------------------------------
 
 
-def test_a_photo_from_someone_who_is_not_an_owner_is_refused_at_the_edge(
-    client, known, turn, fake_http
+def test_a_photo_from_someone_who_is_not_an_owner_reaches_no_model_with_its_bytes(
+    client, known, turn, monkeypatch, fake_http
 ):
-    """Refused before any fetch and before any model call. The input screen reads text parts only,
-    so admitting only owners is what keeps the unscreened surface two people wide (§15)."""
+    """THE containment, and the one this whole feature is built around. Her caption runs as an
+    ordinary typed turn and the handle rides on state — but `image` is absent, so the picture is
+    never a part of any model request and the unscreened surface stays two people wide (§15, §16).
+    """
+
+    async def _never(msg):
+        raise AssertionError("a shelf photo must not be fetched")
+
+    monkeypatch.setattr(channel.media, "image_bytes", _never)
+    fake_http(bot_client, sent())
+    _post(client, _update(photo=[{"file_id": "b"}], caption="se acabó el acetona"))
+    assert turn == [(SENDER, "se acabó el acetona", {"mime": "image/jpeg", "photo_file_id": "b"})]
+
+
+def test_a_shelf_photo_with_nothing_said_is_kept_and_asked_about(
+    client, known, turn, monkeypatch, fake_http
+):
+    """A caption is what names the thing, so there is no turn to run without one. The handle is
+    kept rather than dropped: her NEXT message is what attaches it (§16)."""
+    kept: list[tuple] = []
+
+    async def _remember(user_id, who, file_id, mime):
+        kept.append((user_id, file_id, mime))
+
+    monkeypatch.setattr(channel, "remember_photo", _remember)
     http = fake_http(bot_client, sent())
     _post(client, _update(photo=[{"file_id": "b"}]))
     assert turn == []
-    assert http.requests[0]["json"]["text"] == channel.MEDIA_REFUSED_TEXT
+    assert kept == [(SENDER, "b", "image/jpeg")]
+    assert http.requests[0]["json"]["text"] == channel.PHOTO_SAVED_TEXT
 
 
-def test_a_photo_from_a_stranger_is_refused_before_the_owner_check(client, turn, fake_http):
+def test_a_photo_from_a_stranger_is_refused_before_the_owner_check(
+    client, turn, monkeypatch, fake_http
+):
     """Identity first, always: an unregistered sender's picture reaches nothing."""
+
+    async def _nobody(user_id):
+        return None
+
+    monkeypatch.setattr(channel, "specialist_for", _nobody)
     http = fake_http(bot_client, sent())
     _post(client, _update(photo=[{"file_id": "b"}]))
     assert turn == []

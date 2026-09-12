@@ -68,8 +68,9 @@ adk web                                       # pick `aziza_adk`, http://localho
 ```
 
 The client's page, the mini app and the owner's report ride on the same app. With
-`JOIN_LINK_SECRET` and `PUBLIC_BASE_URL` set in `.env`, `http://localhost:8080/mini-app` shows the
-code and `/j/<token>` is what it points at. The 606 download is `/r/<token>` and wants
+`JOIN_LINK_SECRET` and `PUBLIC_BASE_URL` set in `.env`, `http://localhost:8080/mini-app` opens
+whichever apps the sender's row allows — the code and the line for everybody, what the salon needs
+for an owner — and `/j/<token>` is what the code points at. The 606 download is `/r/<token>` and wants
 `REPORT_LINK_SECRET` and `SALON_RNC` — its own secret, never the join page's. All of them refuse
 everything with no secret configured, which is the safe direction.
 
@@ -126,6 +127,10 @@ service that is not configured yet.
 15. **She puts herself in it.** Open `/mini-app` from the bot's menu button → the code, counting
     down. Scan it with a phone → the form. A number the salon knows goes straight in; a new one is
     asked for a name. Wait for the code to rotate and scan the old one → *"Este código ya venció."*
+16. **What is running out.** *"Se está acabando el algodón"* → on the list, with her name and the
+    day on it. Send a photo of the shelf with that as the caption → the picture is kept without
+    reaching any model. As an owner, open `/mini-app` → two apps rather than one; the list shows
+    everybody who asked, and *Comprado* clears the line.
 
 ## Testing
 

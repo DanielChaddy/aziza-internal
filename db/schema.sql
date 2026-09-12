@@ -471,4 +471,50 @@ CREATE INDEX IF NOT EXISTS ix_expenses_business_date
 CREATE INDEX IF NOT EXISTS ix_expenses_period
     ON expenses (invoice_date) WHERE status = 'registered';
 
+-- WHAT THE SALON BUYS FOR ITSELF, as against what it sells: the things that run out (§16).
+-- No price and no discipline. A supply is matched on, never charged for, so `catalog.resolve`
+-- reads it with the same two fields it reads a service with.
+CREATE TABLE IF NOT EXISTS supplies (
+    id         SERIAL PRIMARY KEY,
+    supply_ref TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL UNIQUE,
+    -- What a specialist calls it out loud, in her own words. Matched on, never shown.
+    aliases    TEXT NOT NULL DEFAULT '',
+    active     BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- One row per time somebody said something is running out (§16).
+--
+-- NOT one row per thing: three specialists noticing the same shortage are three facts, each with
+-- its own date, its own words and possibly its own photograph. What the owner reads is those rows
+-- grouped, and the grouping is derived on every read exactly as a position in the line is (§12).
+CREATE TABLE IF NOT EXISTS supply_requests (
+    id            SERIAL PRIMARY KEY,
+    -- NULL is a supply the salon has not listed. It is recorded rather than refused: a shortage
+    -- nobody seeded is still a shortage, and `said` is what the owner reads in its place (§16).
+    supply_id     INTEGER REFERENCES supplies (id),
+    -- HER OWN WORDS, kept whether or not they resolved. For an unlisted supply it is the only
+    -- name there is, and folded it is what groups two people saying the same thing.
+    said          TEXT NOT NULL,
+    note          TEXT NOT NULL DEFAULT '',
+    -- The transport's own handle on the picture of what is left, and the type it arrived as —
+    -- which Telegram's file lookup does not report, so it cannot be recovered later.
+    -- Re-fetchable in practice and not by contract, and it dies with the bot token (§16).
+    photo_file_id TEXT NOT NULL DEFAULT '',
+    photo_mime    TEXT NOT NULL DEFAULT '',
+    CHECK ((photo_file_id = '') = (photo_mime = '')),
+    reported_by   INTEGER NOT NULL REFERENCES specialists (id),
+    reported_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- NULL is still needed. Set together, and never cleared: an owner who ticked the wrong line
+    -- says so again and the next report is a new row, which is the truth about what happened.
+    bought_at     TIMESTAMPTZ,
+    bought_by     INTEGER REFERENCES specialists (id),
+    CHECK ((bought_at IS NULL) = (bought_by IS NULL))
+);
+
+-- What the list reads: everything still needed, oldest first. The partial index is the whole
+-- query — a bought row is never read again except by a report nobody has asked for.
+CREATE INDEX IF NOT EXISTS ix_supply_requests_pending
+    ON supply_requests (reported_at) WHERE bought_at IS NULL;
+
 COMMIT;

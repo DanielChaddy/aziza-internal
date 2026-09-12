@@ -55,12 +55,9 @@ QUOTA_EXHAUSTED_TEXT = (
     "Llegué al límite de uso por hoy y no puedo registrar nada más. Avísale a la administración."
 )
 NOT_REGISTERED_TEXT = tools.NOT_REGISTERED_MSG
-# Photos are the administration's path, so a specialist who is not an owner is told what the
-# channel is for rather than that photos cannot be read — which stopped being true.
-MEDIA_REFUSED_TEXT = (
-    "Las fotos de facturas las registra la administración. Escríbeme o mándame una nota de voz "
-    "con lo que le hiciste a la clienta."
-)
+# A picture with nothing said about it. The handle outlives this reply, so her next message is
+# what attaches it — which is why this asks rather than refuses (§16).
+PHOTO_SAVED_TEXT = "Guardé la foto. ¿Qué es lo que se está acabando?"
 # The photo arrived and its bytes did not. Separate from the line above for the reason a voice
 # note that yielded no words is separate: telling her photos are somebody else's invites the
 # wrong retry when the fetch is what failed.
@@ -164,14 +161,7 @@ async def run_turn(
     runner = runtime.get_runner()
     found = await _session_for(runner, user_id, who)
     if photo_file_id:
-        await runner.session_service.append_event(
-            found,
-            Event(
-                author="system",
-                invocation_id="photo",
-                actions=EventActions(state_delta={session.PHOTO_KEY: {"file_id": photo_file_id}}),
-            ),
-        )
+        await _remember_photo(runner, found, photo_file_id, mime)
     message = user_turn(text, image=image, mime=mime)
     chunks: list[str] = []
     try:
@@ -191,6 +181,40 @@ async def run_turn(
     return " ".join(chunks).strip()
 
 
+async def _remember_photo(runner, found, file_id: str, mime: str) -> None:
+    """Write a picture's handle to session state. The one way a tool can be sure it is real.
+
+    Stamped with the salon's clock because the handle outlives its turn: a shortage report bounds
+    how old a picture it will attach (§16), and there is nothing else to judge that against.
+
+    `EventActions(state_delta=...)` for the reason `_session_for` gives: assigning to
+    `session.state` mutates a copy the store then drops.
+    """
+    await runner.session_service.append_event(
+        found,
+        Event(
+            author="system",
+            invocation_id="photo",
+            actions=EventActions(
+                state_delta={
+                    session.PHOTO_KEY: {
+                        "file_id": file_id,
+                        "mime": mime,
+                        "at": tools.now().isoformat(),
+                    }
+                }
+            ),
+        ),
+    )
+
+
+async def remember_photo(user_id: str, who: dict, file_id: str, mime: str) -> None:
+    """Keep a picture without running a turn on it, for one that arrived with nothing said."""
+    runner = runtime.get_runner()
+    found = await _session_for(runner, user_id, who)
+    await _remember_photo(runner, found, file_id, mime)
+
+
 class SalonHandler(TurnHandler):
     """One turn, by shape. The channel owns everything before and after these methods."""
 
@@ -202,11 +226,11 @@ class SalonHandler(TurnHandler):
         return await run_turn(msg.sender.value, who, msg.text or "")
 
     async def on_media(self, msg) -> str | None:
-        """A photographed supplier invoice, which is an owner's path and nobody else's.
+        """A photograph, and who sent it decides what it is.
 
-        Refused HERE rather than by the guard, and before any fetch or model call: the input
-        screen reads text parts only, so what is written inside a picture is unscreened by code.
-        Admitting only owners is what keeps that surface two people wide (§15).
+        An OWNER's is a supplier invoice and its bytes reach the model (§15). Anybody else's is
+        what is running low on a shelf: only her caption runs, and the bytes reach nothing, which
+        is what leaves §15's containment the same width it already was (§16).
         """
         # TODO: `agent_adk.latest_user_text` reads text parts, so text inside an image reaches the
         # model unscreened. Contained structurally rather than by a guard — see §15.
@@ -215,8 +239,7 @@ class SalonHandler(TurnHandler):
             logger.info("turn refused: sender %s is not a registered specialist", msg.sender.value)
             return NOT_REGISTERED_TEXT
         if session.OWNER not in (who.get("roles") or ()):
-            logger.info("photo refused: sender %s is not an owner", msg.sender.value)
-            return MEDIA_REFUSED_TEXT
+            return await self._on_shelf_photo(msg, who)
 
         fetched = await media.image_bytes(msg)
         if fetched is None:
@@ -236,6 +259,26 @@ class SalonHandler(TurnHandler):
             # carries the picture.
             logger.error("image turn failed: %s", type(exc).__name__)
             return IMAGE_FAILED_TEXT
+
+    async def _on_shelf_photo(self, msg, who: dict) -> str | None:
+        """A picture of what is running out. Nothing is fetched and no model sees it.
+
+        With nothing said about it there is no turn to run — a caption is what names the thing —
+        so the handle is kept and she is asked. It survives on the session, so her next message
+        is what attaches it.
+        """
+        caption = (msg.caption or "").strip()
+        logger.info("photo kept for a shortage report, caption=%s", bool(caption))
+        if not caption:
+            await remember_photo(msg.sender.value, who, msg.media_id or "", msg.media_mime or "")
+            return PHOTO_SAVED_TEXT
+        return await run_turn(
+            msg.sender.value,
+            who,
+            caption,
+            mime=msg.media_mime or "",
+            photo_file_id=msg.media_id or "",
+        )
 
     async def on_unsupported(self, msg) -> str | None:
         # The channel routes a voice note here only once transcription has produced nothing, and

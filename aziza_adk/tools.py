@@ -42,6 +42,7 @@ from aziza_adk import (
     reports,
     session,
     staff,
+    supplies,
 )
 from aziza_adk.money import ZERO
 
@@ -116,6 +117,7 @@ SPECIALIST_TOOL_NAMES = frozenset(
         "call_next",
         "who_is_waiting",
         "remove_from_queue",
+        "report_shortage",
     }
 )
 
@@ -262,6 +264,9 @@ ALREADY_SERVING_MSG = (
     "Todavía tienes a {client} contigo. Cóbrale o sácala de la fila, y llamo a la siguiente."
 )
 NOT_IN_LINE_MSG = "Esa clienta no está en la fila hoy."
+
+NEED_ITEM_MSG = "¿Qué es lo que se está acabando?"
+AMBIGUOUS_SUPPLY_MSG = "Hay más de una cosa con ese nombre. ¿Cuál de estas era?"
 
 #: What a specialist calls each of the salon's areas, folded. The values are `disciplines.code`.
 #: A folded table rather than a resolve against the table itself: `disciplines` has no aliases
@@ -2396,6 +2401,62 @@ def who_is_waiting(tool_context: ToolContext = None) -> dict:
         ],
         "being_attended": [one.client_name for one in found if one.serving is not None],
     }
+
+
+def report_shortage(item: str, note: str = "", tool_context: ToolContext = None) -> dict:
+    """Record that the salon is running out of something, so an owner has it when she goes to buy.
+
+    Anybody may say so, at any hour. A photograph she sent of what is left attaches itself, so
+    there is no argument for one — §16.
+
+    Args:
+        item: What is running out, in her own words. Nothing has to be on a list.
+        note: Anything else she said about it — how much is left, which brand. Empty otherwise.
+
+    Returns:
+        {"reported": true, "item": str, "listed": bool, "with_photo": bool} or
+        {"error", "message"}, with "options" on an ambiguity.
+    """
+    if (refused := _unauthorized(tool_context)) is not None:
+        return refused
+    said = (item or "").strip()
+    if not said:
+        return {"error": "need_item", "message": NEED_ITEM_MSG}
+    with queries.connect() as conn:
+        found = catalog.resolve(said, supplies.catalog(queries.supply_catalog(conn)))
+        if found.candidates:
+            return {
+                "error": "ambiguous_supply",
+                "message": AMBIGUOUS_SUPPLY_MSG,
+                "options": list(supplies.names(found.candidates)),
+            }
+        file_id, mime = _shelf_photo(tool_context)
+        queries.record_shortage(
+            conn,
+            # Empty is a thing the salon has not listed, and recording one is §16.
+            supply_ref=found.match.supply_ref if found.match else "",
+            said=said,
+            note=(note or "").strip(),
+            reported_by=session.specialist_id(tool_context),
+            photo_file_id=file_id,
+            photo_mime=mime,
+        )
+    return {
+        "reported": True,
+        "item": found.match.name if found.match else said,
+        "listed": found.match is not None,
+        "with_photo": bool(file_id),
+    }
+
+
+def _shelf_photo(tool_context: Any) -> tuple[str, str]:
+    """The picture to attach to a shortage, or two empty strings. Bounded by age — §16."""
+    at = session.photo_at(tool_context)
+    if at is None:
+        return "", ""
+    if now() - at > dt.timedelta(minutes=config.SHORTAGE_PHOTO_TTL_MINUTES):
+        return "", ""
+    return session.photo(tool_context), session.photo_mime(tool_context)
 
 
 def remove_from_queue(

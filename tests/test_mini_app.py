@@ -24,7 +24,22 @@ _TZ = dt.timezone(dt.timedelta(hours=-4))
 _OPEN = dt.datetime(2026, 9, 1, 14, 0, tzinfo=_TZ)
 
 #: Every route with data behind it. The parametrize below is the attachment test.
-GATED = [("POST", "/mini-app/qr"), ("POST", "/mini-app/queue")]
+GATED = [
+    ("POST", "/mini-app/apps"),
+    ("POST", "/mini-app/qr"),
+    ("POST", "/mini-app/queue"),
+    ("POST", "/mini-app/supplies"),
+    ("POST", "/mini-app/supplies/bought"),
+    ("POST", "/mini-app/supplies/photo"),
+]
+
+#: What only an owner may reach. Gated twice — the launcher decides what she is OFFERED, and the
+#: route decides what she may READ (§16).
+OWNER_ONLY = [
+    ("POST", "/mini-app/supplies"),
+    ("POST", "/mini-app/supplies/bought"),
+    ("POST", "/mini-app/supplies/photo"),
+]
 
 
 @pytest.fixture
@@ -54,6 +69,12 @@ def _launch(telegram_user_id: str) -> dict:
 def registered(make_specialist):
     """A specialist the salon knows, with a Telegram id the launch can carry."""
     return make_specialist("nails")
+
+
+@pytest.fixture
+def owner(make_specialist):
+    """An owner: the one person the list of things to buy is for (§16)."""
+    return make_specialist(roles=("owner",), full_name="Zoila Sentinel")
 
 
 def _at_her_auth_date(monkeypatch):
@@ -217,7 +238,9 @@ def test_the_policy_admits_telegrams_sdk_and_the_pages_own_script_and_no_third(c
     policy = client.get("/mini-app").headers["content-security-policy"]
     assert f"script-src 'self' {mini_app_page.SDK}" in policy
     assert "connect-src 'self'" in policy
-    assert "img-src 'self' data:" in policy
+    # `blob:` is what a photograph fetched WITH the credential becomes: an <img src> carries no
+    # header, so the bytes are read by `fetch` and handed to the document as an object URL.
+    assert "img-src 'self' data: blob:" in policy
 
 
 def test_the_join_page_and_the_mini_app_differ_on_framing_and_on_scripts(configured, client):
@@ -227,3 +250,146 @@ def test_the_join_page_and_the_mini_app_differ_on_framing_and_on_scripts(configu
     assert "frame-ancestors 'none'" in queue_http.HEADERS["Content-Security-Policy"]
     assert "script-src" not in queue_http.HEADERS["Content-Security-Policy"]
     assert "form-action 'none'" in mini_app.HEADERS["Content-Security-Policy"]
+
+
+# --- [5] One shell, and the apps her own row lets her open -----------------------------------
+
+
+def test_a_specialist_is_offered_the_queue_app_and_nothing_else():
+    """Showing a client the code is the one thing every specialist does. The list is an owner's,
+    because she is the one who goes to the shop (§16)."""
+    assert [app["key"] for app in mini_app.apps_for({"roles": []})] == [mini_app.QUEUE]
+
+
+def test_an_owner_is_offered_both():
+    offered = mini_app.apps_for({"roles": ["owner"]})
+    assert [app["key"] for app in offered] == [mini_app.QUEUE, mini_app.SUPPLIES]
+
+
+def test_a_row_with_no_roles_at_all_is_read_as_holding_none():
+    """Fails closed on a row shaped differently than expected, rather than on a KeyError that
+    would take the whole launch down."""
+    assert [app["key"] for app in mini_app.apps_for({})] == [mini_app.QUEUE]
+
+
+def test_every_offered_app_has_a_view_in_the_page(configured, client):
+    """A key offered here with no section of that id in the shell is a tap into a blank screen —
+    and nothing else would catch it, because the launcher renders whatever it is handed."""
+    page = client.get("/mini-app").text
+    for key in (mini_app.QUEUE, mini_app.SUPPLIES):
+        assert f"<section id={key} hidden>" in page or f'<section id="{key}" hidden>' in page
+
+
+def test_the_script_and_the_shell_agree_on_every_id(configured, client):
+    """They are two files with no compiler between them, so a rename in one is a silent break in
+    the other: the page loads, the console is clean, and nothing renders."""
+    import re
+
+    page = client.get("/mini-app").text
+    script = client.get("/mini-app/app.js").text
+    wanted = set(re.findall(r'getElementById\("([^"]+)"\)', script))
+    assert wanted
+    for name in wanted:
+        assert re.search(rf'id=["\']?{name}\b', page), name
+
+
+def test_the_launcher_names_the_apps_and_the_way_back(configured, client, monkeypatch, registered):
+    _at_her_auth_date(monkeypatch)
+    body = client.post("/mini-app/apps", headers=_launch(registered["telegram_user_id"])).json()
+    assert [app["label"] for app in body["apps"]] == [mini_app.MINI_APP_HEADING_TEXT]
+    assert body["choose_label"] == mini_app.LAUNCHER_HEADING_TEXT
+    assert body["back_label"] == mini_app.BACK_TEXT
+
+
+def test_an_owner_is_offered_two_apps_over_the_wire(configured, client, monkeypatch, owner):
+    _at_her_auth_date(monkeypatch)
+    body = client.post("/mini-app/apps", headers=_launch(owner["telegram_user_id"])).json()
+    assert [app["key"] for app in body["apps"]] == [mini_app.QUEUE, mini_app.SUPPLIES]
+
+
+# --- [6] What the salon needs, and who may read it --------------------------------------------
+
+
+@pytest.mark.parametrize("method,path", OWNER_ONLY)
+def test_a_specialist_who_is_not_an_owner_reaches_none_of_the_list(
+    configured, client, monkeypatch, registered, method, path
+):
+    """Gated twice on purpose: the launcher decides what she is OFFERED, and this decides what
+    she may reach. A launcher trusted to be the gate is a gate in the page."""
+    _at_her_auth_date(monkeypatch)
+    answer = client.request(
+        method, path, headers=_launch(registered["telegram_user_id"]), json={"ids": [1]}
+    )
+    assert answer.status_code == 403
+    assert answer.json()["error"] == "not_an_owner"
+
+
+def test_an_owner_reads_the_list_with_every_label_on_it(configured, client, monkeypatch, owner):
+    """The copy travels WITH the data, so every Spanish literal in this app is a constant
+    `tests/test_voice.py` can find — docs/BRAND_VOICE.md §6."""
+    _at_her_auth_date(monkeypatch)
+    body = client.post("/mini-app/supplies", headers=_launch(owner["telegram_user_id"])).json()
+    assert body["empty_label"] == mini_app.SUPPLIES_EMPTY_TEXT
+    assert body["bought_label"] == mini_app.SUPPLIES_BOUGHT_TEXT
+    assert body["photo_label"] == mini_app.SUPPLIES_PHOTO_TEXT
+    assert body["unlisted_label"] == mini_app.SUPPLIES_UNLISTED_TEXT
+    assert isinstance(body["items"], list)
+
+
+def test_what_one_owner_reports_the_other_can_tick_off(
+    configured, client, monkeypatch, owner, make_specialist, conn
+):
+    """The round trip: somebody says it, an owner sees it with her name on it, ticks it, and it
+    is gone. The tick answers with the list as it now stands rather than with a bare ok."""
+    from aziza_adk import queries
+
+    kathy = make_specialist("nails", full_name="Kathy Sentinel")
+    queries.record_shortage(
+        conn,
+        supply_ref="",
+        said="papel de camilla",
+        note="queda un rollo",
+        reported_by=kathy["id"],
+    )
+    _at_her_auth_date(monkeypatch)
+    headers = _launch(owner["telegram_user_id"])
+    listed = client.post("/mini-app/supplies", headers=headers).json()["items"]
+    mine = [one for one in listed if one["label"] == "papel de camilla"]
+    assert len(mine) == 1
+    assert mine[0]["listed"] is False
+    assert mine[0]["reports"][0]["who"] == "Kathy"
+    assert mine[0]["reports"][0]["note"] == "queda un rollo"
+
+    left = client.post("/mini-app/supplies/bought", headers=headers, json={"ids": mine[0]["ids"]})
+    assert left.status_code == 200
+    assert "papel de camilla" not in [one["label"] for one in left.json()["items"]]
+
+
+def test_a_tick_naming_nothing_buys_nothing(configured, client, monkeypatch, owner, conn):
+    """A body that is not a list of whole numbers is the one thing on these routes the PAGE
+    supplies, so it marks none rather than being trusted into a query."""
+    from aziza_adk import queries
+
+    queries.record_shortage(conn, supply_ref="", said="algodón", note="", reported_by=owner["id"])
+    _at_her_auth_date(monkeypatch)
+    headers = _launch(owner["telegram_user_id"])
+    left = client.post("/mini-app/supplies/bought", headers=headers, json={"ids": ["all", True]})
+    assert "algodón" in [one["label"] for one in left.json()["items"]]
+
+
+def test_a_report_with_no_picture_has_none_to_open(configured, client, monkeypatch, owner, conn):
+    """By ROW rather than by handle: a `file_id` accepted here would let anybody holding one read
+    any picture the bot can reach, which is every invoice the salon has photographed."""
+    from aziza_adk import queries
+
+    made = queries.record_shortage(
+        conn, supply_ref="", said="guantes", note="", reported_by=owner["id"]
+    )
+    _at_her_auth_date(monkeypatch)
+    answer = client.post(
+        "/mini-app/supplies/photo",
+        headers=_launch(owner["telegram_user_id"]),
+        json={"ids": [made["id"]]},
+    )
+    assert answer.status_code == 404
+    assert answer.json()["error"] == "no_photo"
