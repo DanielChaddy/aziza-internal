@@ -24,6 +24,9 @@ one or more methods, recording a tip, closing the sale against the specialist wh
 charging a specialist for what she takes for herself, recording what she pays against that, and
 reporting each specialist's day.
 
+Also in scope: saying that the salon is running out of something, which anybody may do and which
+records no money at all — an owner reads the list of it when she goes to buy (§16).
+
 An owner does all of the above against a named specialist as well as herself, and may
 read that specialist's day. She also records what the salon BUYS, by photographing a supplier
 invoice, and downloads a month of those as the report DGII is filed (§15).
@@ -523,6 +526,21 @@ is wrong.
 minting and a printed sign cannot. It shows the current code, counts down to the next one, and lists
 the line as it stands.
 
+**It is one document holding several apps, and which she gets is read off her row.** The queue app
+is everybody's, because showing a client the code is the one thing every specialist does; the list
+of what the salon needs is an owner's, because she is the one who goes to the shop (§16). Somebody
+holding one is taken straight into it — a launcher listing a single thing is a tap asking for
+nothing — and somebody holding two chooses.
+
+**WHICH apps exist for her is itself a gated read**, for the reason the shell carries no name: the
+answer names her role, and the shell is public. So the launcher is `POST /mini-app/apps` like every
+other read, and what it returns is the same tuple the routes behind it are gated on.
+
+**The launcher is not the gate, and each app re-checks.** It decides what she is OFFERED; what she
+may reach is decided at the route, off the row. A launcher trusted to be the gate would be a gate
+living in the page — the same mistake as a prompt enforcing a role, and the same answer as a tool
+body re-checking what `guards.before_tool_guard` already refused (§3).
+
 **The credential is the one §3 already names.** Telegram signs `initData` with a key derived from
 the bot token, and the id inside it is the `telegram_user_id` the `specialists` table keys on — so a
 mini app request is authorized exactly as a message is, by a row the salon registered in advance.
@@ -708,3 +726,66 @@ rather than in the path, so one link means one month.
 
 **With no `SALON_RNC` or no signing secret nothing is minted.** A filing that does not say who filed
 it is worse than none, and an unsigned link is worse than no link.
+
+## §16 · What the salon needs
+
+**Anybody says what is running out, and an owner reads one list of it in the shop.** A specialist
+between clients is the person who reaches for the last of something, and she is not the person who
+buys it — so noticing and buying are two halves with a list between them.
+
+**It is not a purchase and it moves no money.** Nothing here touches the register, no figure is
+recorded, and `register_expense` is untouched: the invoice for what she came back with is §15's
+flow and stays that way. So `report_shortage` is gated on nothing beyond being a registered
+specialist — not on a role, and not on the hours, because a shortage is noticed when it is noticed.
+
+**A report is a row and is never an UPDATE.** Three people noticing the same thing are three facts,
+each with its own date, its own words and possibly its own photograph. What an owner reads is those
+rows GROUPED, derived on every read exactly as a place in the line is (§12) — so nothing has to
+decide at write time which existing thing a phrase was about.
+
+**The grouping is exact, and that is what makes it safe.** Two reports are one line when they name
+the same catalog row, or — with no row behind either — when the words fold to exactly the same
+string. Never the catalog's overlap pass: it reads "cera" out of "cera caliente", and two different
+things on one line is an owner coming home without one of them. Same reasoning as client names (§3).
+
+**A thing the salon has not listed is recorded in her own words rather than refused.** `supplies` is
+a seeded catalog and resolves through `catalog.resolve` unchanged, because a supply is a name and
+the words she calls it by — which is all that resolver ever reads. But a phrase matching nothing
+still records, with her words as the only name it has and the list saying so. A shortage nobody
+seeded is still a shortage, and refusing it is precisely the failure this exists to prevent. An
+ambiguity is still a question: buying the wrong one of two is a trip wasted.
+
+### The photograph, and why §15's containment is untouched
+
+**She can show what is left rather than describe it**, and the picture reaches no model. A photo
+from someone who is not an owner runs as her CAPTION alone — an ordinary typed turn — with only the
+transport's handle kept. The bytes are never a part of a model request.
+
+That asymmetry is the point rather than an accident. §15's containment is that only owners send a
+photo the model reads, because the input screen reads text parts and what is written inside a
+picture is unscreened by code. Admitting the PICTURE from everybody while admitting its BYTES from
+nobody new leaves that surface exactly two people wide.
+
+**The handle is written to session state at the edge and is never a tool argument**, the same rule
+and the same reason as §15's: a model asked for one produces something plausible.
+
+**It outlives its turn, and is bounded by age.** A picture sent with nothing said has nothing to
+name it, so the handle is kept and she is asked — her next message is what attaches it. One never
+answered would otherwise ride along on a report days later, showing an owner a shelf nobody meant,
+so `SHORTAGE_PHOTO_TTL_MINUTES` bounds it. Bounded rather than consumed on use, because one
+photograph of a shelf legitimately answers two things said in one breath.
+
+**An owner reads it back through a route rather than a link**, by ROW and never by handle. A
+`file_id` accepted from the page would let anybody holding one read any picture the bot can reach,
+which is every invoice the salon has ever photographed.
+
+### Ticking it off
+
+**Ticking one line marks every pending report on it bought**, with who and when. Reports that arrive
+after she read the list stay pending, which is the truth about them: they were not in her hand at
+the shop, and somebody saying it is still missing is worth seeing.
+
+**Already-bought rows are left alone rather than re-stamped**, so two owners in the same shop record
+who got there first instead of overwriting each other. Nothing is ever un-ticked: an owner who
+ticked the wrong line says so again, and the next report is a new row — which is what happened.
+

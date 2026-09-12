@@ -111,9 +111,12 @@ def stand_down_absent(conn: psycopg.Connection, keep_refs: list[str]) -> int:
 
 
 def retire_absent(
-    conn: psycopg.Connection, product_refs: list[str], service_refs: list[str]
+    conn: psycopg.Connection,
+    product_refs: list[str],
+    service_refs: list[str],
+    supply_refs: list[str],
 ) -> int:
-    """Deactivate every product and service whose ref the dataset no longer holds. Answers how many.
+    """Deactivate every catalog row whose ref the dataset no longer holds. Answers how many.
 
     What `stand_down_absent` is for people, and for the same reason: a row left active after the
     dataset drops it is still sellable and still listed in the prompt's catalog block, so a
@@ -131,6 +134,11 @@ def retire_absent(
         cur.execute(
             "UPDATE services SET active = FALSE WHERE active AND NOT (service_ref = ANY(%(refs)s))",
             {"refs": service_refs},
+        )
+        retired += cur.rowcount
+        cur.execute(
+            "UPDATE supplies SET active = FALSE WHERE active AND NOT (supply_ref = ANY(%(refs)s))",
+            {"refs": supply_refs},
         )
         return retired + cur.rowcount
 
@@ -1506,4 +1514,96 @@ def expenses_for_period(conn: psycopg.Connection, first: dt.date, last: dt.date)
         " WHERE status = 'registered' AND invoice_date BETWEEN %(first)s AND %(last)s "
         " ORDER BY invoice_date, expense_ref",
         {"first": first, "last": last},
+    )
+
+
+# --- what the salon needs ---------------------------------------------------
+
+
+def supply_catalog(conn: psycopg.Connection) -> list[dict]:
+    """Every active supply, as the resolver wants it. No price column: nothing sells these."""
+    return fetchall(
+        conn,
+        "SELECT supply_ref, name, aliases FROM supplies WHERE active ORDER BY name",
+    )
+
+
+def record_shortage(
+    conn: psycopg.Connection,
+    *,
+    supply_ref: str,
+    said: str,
+    note: str,
+    reported_by: int,
+    photo_file_id: str = "",
+    photo_mime: str = "",
+) -> dict:
+    """Record that somebody said something is running out. One row per report, always.
+
+    Never an UPDATE of an existing one: two people noticing the same shortage are two facts with
+    two dates, and the list groups them on the way out. An empty `supply_ref` is a supply the
+    salon has not listed — §16.
+    """
+    row = fetchone(
+        conn,
+        "INSERT INTO supply_requests "
+        "  (supply_id, said, note, photo_file_id, photo_mime, reported_by) "
+        "VALUES ((SELECT id FROM supplies WHERE supply_ref = %(ref)s), "
+        "        %(said)s, %(note)s, %(file_id)s, %(mime)s, %(by)s) "
+        "RETURNING id, reported_at",
+        {
+            "ref": supply_ref,
+            "said": said,
+            "note": note,
+            "file_id": photo_file_id,
+            "mime": photo_mime,
+            "by": reported_by,
+        },
+    )
+    conn.commit()
+    return row or {}
+
+
+def pending_supplies(conn: psycopg.Connection) -> list[dict]:
+    """Every report nobody has bought yet, oldest first. `supplies.needed` does the grouping."""
+    return fetchall(
+        conn,
+        """
+        SELECT r.id, r.said, r.note, r.photo_file_id, r.reported_at,
+               sp.supply_ref, sp.name AS supply_name,
+               who.full_name AS reported_by_name
+        FROM supply_requests r
+        JOIN specialists who ON who.id = r.reported_by
+        LEFT JOIN supplies sp ON sp.id = r.supply_id
+        WHERE r.bought_at IS NULL
+        ORDER BY r.reported_at, r.id
+        """,
+    )
+
+
+def mark_bought(conn: psycopg.Connection, request_ids: Sequence[int], bought_by: int) -> int:
+    """Tick off what an owner has just bought. Returns how many rows this actually closed.
+
+    Already-bought rows are left alone rather than re-stamped: two owners in the same shop record
+    who got there first.
+    """
+    row = fetchone(
+        conn,
+        "WITH ticked AS ("
+        "  UPDATE supply_requests SET bought_at = now(), bought_by = %(by)s "
+        "   WHERE id = ANY(%(ids)s) AND bought_at IS NULL RETURNING id) "
+        "SELECT count(*) AS ticked FROM ticked",
+        {"ids": list(request_ids), "by": bought_by},
+    )
+    conn.commit()
+    return int((row or {}).get("ticked") or 0)
+
+
+def supply_photo(conn: psycopg.Connection, request_id: int) -> dict | None:
+    """The transport's handle on one report's picture, or None when it carries none."""
+    return fetchone(
+        conn,
+        "SELECT photo_file_id, photo_mime FROM supply_requests "
+        " WHERE id = %(id)s AND photo_file_id <> ''",
+        {"id": request_id},
     )

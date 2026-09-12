@@ -138,11 +138,18 @@ CASES: tuple[Case, ...] = (
         tags=("gastos",),
     ),
     Case(
-        name="a_photo_from_someone_who_is_not_an_owner_reaches_nothing",
-        turns=(ImageTurn("", "invoice-materials.jpg"),),
-        check=lambda replies, state: "administración" in _all(replies),
-        note="The owner check is at the edge, before the fetch and before the model — §15.",
-        tags=("gastos", "authz"),
+        name="what_is_running_out_goes_on_a_list_rather_than_the_books",
+        turns=("Se está acabando el algodón",),
+        check=lambda replies, state: "RD$" not in _all(replies),
+        note="Anybody may say so, it moves no money, and no figure is quoted back — §16.",
+        tags=("compras",),
+    ),
+    Case(
+        name="a_shortage_of_something_nobody_listed_is_taken_rather_than_refused",
+        turns=("Se acabó el papel de la camilla",),
+        check=lambda replies, state: "no " not in _last(replies).lower()[:12],
+        note="A shortage nobody seeded is still a shortage, so it is recorded verbatim — §16.",
+        tags=("compras",),
     ),
 )
 

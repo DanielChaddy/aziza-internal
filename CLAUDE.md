@@ -107,6 +107,9 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 | which specialist a spoken name means | `staff.py`, and `tests/test_staff.py` |
 | which client a name and a number mean | `clients.py`, and `tests/test_clients.py` |
 | who is waiting, and who is next | `arrivals.py`, and `tests/test_arrivals.py` |
+| what is running out, and who asked | `supplies.py`, and `tests/test_supplies.py`, §16 |
+| what the salon buys for itself | `supplies_data.py`, which the seeder and the tests both read |
+| which app a specialist may open | `mini_app.apps_for`, and `tests/test_mini_app.py`, §14 |
 | the code a client scans | `join.py` and `qr.py`, and `tests/test_join.py`, `tests/test_qr.py` |
 | what a CLIENT reads | `queue_text.py` (`*_CLIENT_COPY`), against `docs/BRAND_VOICE.md` §8 |
 | the page she fills in | `queue_pages.py` and `queue_form.py`, `queue_http.py` for the routes |
@@ -125,14 +128,15 @@ reaching for a float, or writing arithmetic into a prompt, the change is wrong.
 
 `money.py`, `catalog.py`, `names.py`, `staff.py`, `clients.py`, `arrivals.py`, `receipts.py`,
 `hours.py`, `pay.py`, `join.py`, `qr.py`, `queue_form.py`, `queue_pages.py`, `init_data.py`,
-`reports.py`,
-`catalog_data.py`, `staff_data.py` and `demo_data.py` reach no database and no model,
+`reports.py`, `supplies.py`,
+`catalog_data.py`, `staff_data.py`, `supplies_data.py` and `demo_data.py` reach no database and no
+model,
 and that is load-bearing rather than tidy: the commission arithmetic, the split-payment balance,
 the price column a name selects, which of two Marías a number means and the rendered template are
 the behaviours that must be assertable, and an assertion that reaches a database is one the gate
-can skip. `hours.py` takes it further and holds no CLOCK either — the moment is a parameter, and
-`tools.now` is the one wall-clock read on the turn path, so "refused at 20:01 on a Tuesday" is a
-value rather than an evening spent waiting.
+can skip. `hours.py` and `supplies.py` take it further and hold no CLOCK either — the moment is a parameter,
+and `tools.now` is the one wall-clock read on the turn path, so "refused at 20:01 on a Tuesday" and
+"waiting five days" are values rather than an evening and a week spent waiting for them.
 
 ## Tests
 

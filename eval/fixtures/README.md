@@ -10,4 +10,4 @@ What the cases ask for today:
 
 | File | The case that wants it |
 |---|---|
-| `invoice-materials.jpg` | `a_photographed_invoice_is_confirmed_before_it_is_registered`, `a_photo_from_someone_who_is_not_an_owner_reaches_nothing` |
+| `invoice-materials.jpg` | `a_photographed_invoice_is_confirmed_before_it_is_registered` |

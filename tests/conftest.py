@@ -94,6 +94,14 @@ def sentinel(conn):
                 f"DELETE FROM expenses WHERE recorded_by IN {sentinels}",
                 {"prefix": SENTINEL_REF + "%"},
             )
+            # Neither `reported_by` nor `bought_by` has an ON DELETE action, for the reason
+            # `recorded_by` does not: who noticed a shortage is part of what the salon knows
+            # about it. Matched on either, because an owner appears as the one who bought it.
+            cur.execute(
+                f"DELETE FROM supply_requests "
+                f"WHERE reported_by IN {sentinels} OR bought_by IN {sentinels}",
+                {"prefix": SENTINEL_REF + "%"},
+            )
             cur.execute(
                 f"DELETE FROM specialist_ledger "
                 f"WHERE specialist_id IN {sentinels} OR recorded_by IN {sentinels}",
