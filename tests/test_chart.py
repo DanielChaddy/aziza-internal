@@ -218,3 +218,38 @@ def test_every_routed_path_reaches_the_one_workload() -> None:
     assert _ING.count("backend:") == 1
     assert _ING.count("service:") == 1
     assert _ING.count('include "aziza.fullname" $') == 1
+
+
+# --- where the Secret comes from ---------------------------------------------
+# The Secret is written by External Secrets from OpenBao, and three names have to agree or every
+# pod comes up in CreateContainerConfigError: the ExternalSecret's own name, the target it writes,
+# and the `existingSecret` every secretKeyRef in this chart resolves. One value drives all three,
+# and this is what holds that.
+
+_ES = _code(_CHART / "templates" / "externalsecret.yaml")
+
+
+def test_the_external_secret_names_the_secret_the_chart_reads() -> None:
+    """Both the object and its target come from `existingSecret`, so neither can be renamed alone."""
+    assert _ES.count(".Values.existingSecret") == 2
+
+
+def test_the_chart_still_renders_no_credential() -> None:
+    """The whole point of `existingSecret`: `helm template` and `helm get manifest` stay safe to
+    paste. An ExternalSecret names a path; it does not carry a value."""
+    assert "stringData" not in _ES
+    # Line-exact: "kind: Secret" is a substring of "kind: SecretStore", which this file does declare.
+    assert not any(ln.strip() == "kind: Secret" for ln in _ES.splitlines())
+
+
+def test_the_store_is_namespaced_not_cluster_wide() -> None:
+    """A ClusterSecretStore authenticates as the External Secrets controller rather than as this
+    release, which would read every mount on the server instead of this app's one."""
+    assert "kind: SecretStore" in _ES
+    assert "kind: ClusterSecretStore" not in _ES
+
+
+def test_the_store_authenticates_as_this_release() -> None:
+    """Not a values knob: the OpenBao auth role is bound to this ServiceAccount and this namespace,
+    and any other name is refused at login rather than misread as a different app."""
+    assert 'include "aziza.fullname"' in _ES
