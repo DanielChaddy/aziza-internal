@@ -49,15 +49,33 @@ Without it the first pull is an `ImagePullBackOff`, which `--atomic` rolls back 
 disappears and the reason is in the events of a pod that no longer exists.
 
 **4 · The app Secret.** `deploy/.env.example` lists every key and where its value comes from. It is
-created out of band so the chart never renders a credential and `helm template` cannot leak one:
+no longer created here: those values live in OpenBao at `aziza/prod/app`, and External Secrets
+writes the Secret into the namespace — `deploy/helm/aziza/templates/externalsecret.yaml` declares
+that, so the wiring ships with the chart instead of living in somebody's shell history. The chart
+still renders no credential, so `helm template` cannot leak one.
+
+Adding or rotating a key is a write to the store. The server fronts no Ingress, so reach it through
+a port-forward:
 
 ```bash
-kubectl -n z-aziza create secret generic aziza-secrets \
-  --from-env-file=deploy/.env --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n openbao port-forward svc/openbao 8200:8200
+export VAULT_ADDR=http://127.0.0.1:8200
+vault login -no-print
+vault kv patch -mount=aziza prod/app TELEGRAM_BOT_TOKEN=<new>
 ```
 
-`create | apply` replaces the data wholesale, so a key added to the live Secret by hand is deleted
-on the next run — add it to `deploy/.env` instead.
+`patch` changes the keys it names and leaves the rest. `put` replaces the whole path, so a key
+omitted from a `put` is deleted from the Secret on the next sync — which is the same wholesale
+replacement the old `create | apply` had, moved one layer back.
+
+The change lands within `openbao.refreshInterval` (an hour), or immediately with:
+
+```bash
+kubectl -n z-aziza annotate externalsecret aziza-secrets force-sync=$(date +%s) --overwrite
+```
+
+A pod already running does not pick up a changed Secret on its own: `kubectl -n z-aziza rollout
+restart sts/aziza` is what makes it read the new value.
 
 **5 · The webhook registration.** Telegram must be told where to deliver, with the same secret the
 Secret carries:

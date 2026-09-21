@@ -23,14 +23,30 @@ imagePullSecrets:
   # cluster. deploy/helm/README.md § Prerequisites owns how it is created.
   - name: ghcr
 
-# Secret holding the real secrets, created OUT OF BAND so the chart never renders them and
-# `helm get manifest` / `helm template` cannot leak them:
+# Secret holding the real secrets. The chart never renders them, so `helm get manifest` /
+# `helm template` cannot leak them; templates/externalsecret.yaml declares where they come from
+# and External Secrets writes them into the namespace.
 #
-#   kubectl -n z-aziza create secret generic aziza-secrets \
-#     --from-env-file=deploy/.env --dry-run=client -o yaml | kubectl apply -f -
-#
-# deploy/.env.example lists every key it must hold and where each value comes from.
+# deploy/.env.example still lists every key it must hold and where each value comes from — that
+# list is now the contract for what lives at the OpenBao path below.
 existingSecret: aziza-secrets
+
+# The source of `existingSecret`. The server is Infra/Infra's `OpenBao/` release on this cluster;
+# the mount, the role and the path under it are created by its Terraform, and renaming any of them
+# there without renaming it here leaves every pod in CreateContainerConfigError.
+#
+# There is no value for the ServiceAccount: the auth role is bound to this release's own, and a
+# knob for it would only ever be set to something OpenBao refuses.
+openbao:
+  server: http://openbao.openbao.svc.cluster.local:8200
+  mount: aziza
+  authMount: kubernetes
+  role: aziza-prod
+  key: prod/app
+  # An hour, not a minute. External Secrets leaves the Secret it has already written in place when
+  # it cannot reach the server, so a short interval buys nothing and only multiplies reads against
+  # a server that spends part of its life sealed.
+  refreshInterval: 1h
 
 ingress:
   host: aziza.danielchaddy.com
