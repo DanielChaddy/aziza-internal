@@ -230,7 +230,8 @@ _ES = _code(_CHART / "templates" / "externalsecret.yaml")
 
 
 def test_the_external_secret_names_the_secret_the_chart_reads() -> None:
-    """Both the object and its target come from `existingSecret`, so neither can be renamed alone."""
+    """Both the object and its target come from `existingSecret`, so neither can be renamed
+    alone."""
     assert _ES.count(".Values.existingSecret") == 2
 
 
@@ -238,7 +239,7 @@ def test_the_chart_still_renders_no_credential() -> None:
     """The whole point of `existingSecret`: `helm template` and `helm get manifest` stay safe to
     paste. An ExternalSecret names a path; it does not carry a value."""
     assert "stringData" not in _ES
-    # Line-exact: "kind: Secret" is a substring of "kind: SecretStore", which this file does declare.
+    # Line-exact: "kind: Secret" is a substring of "kind: SecretStore", which this file declares.
     assert not any(ln.strip() == "kind: Secret" for ln in _ES.splitlines())
 
 
