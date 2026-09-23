@@ -6,14 +6,14 @@ This is the operations runbook. For the local development stack see the reposito
 
 | Thing | Value |
 |---|---|
-| Cluster | DOKS `k8s-1-33-1-do-3-sfo2-1755028278626` (sfo2), context `do-sfo2-k8s-1-33-1-do-3-sfo2-1755028278626` |
+| Cluster | DOKS `k8s-nyc2` (nyc2), context `do-nyc2-k8s-nyc2` |
 | Namespace | `z-aziza` |
 | Release | `aziza` |
-| Ingress | `ingress-nginx`, class `nginx`, LoadBalancer `134.209.140.10` |
+| Ingress | `ingress-nginx`, class `nginx`, LoadBalancer `138.197.240.30` |
 | Host | `aziza.danielchaddy.com` — deliberately NOT under the client's zone, which would name this service beside its siblings and publish that to Certificate Transparency |
 | TLS | `cert-manager` ClusterIssuer `letsencrypt-prod` (HTTP-01) |
 | Registry | `ghcr.io/danielchaddy/aziza-internal`, pull secret `ghcr` — created here, because GHCR has no registry integration on this cluster |
-| Database | DO Managed Postgres `dev-db-pgsql` (sfo2, PG 18) — databases `aziza` and `aziza_sessions` |
+| Database | DO Managed Postgres `dev-db-pgsql-nyc2` (nyc2, PG 18) — databases `aziza` and `aziza_sessions` |
 | Telemetry | None. `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, so nothing is pushed to the `observability` collector and `kubectl logs` is the whole story |
 
 **One workload and one scheduled job.** `sts/aziza` runs the Telegram webhook on the image's
@@ -24,11 +24,11 @@ else is deployed.
 
 Six things this chart does not create, in the order they are needed. None of them are in git.
 
-**1 · The two databases.** On `dev-db-pgsql`, `aziza` and `aziza_sessions`, and a role that owns
+**1 · The two databases.** On `dev-db-pgsql-nyc2`, `aziza` and `aziza_sessions`, and a role that owns
 both. They must be separate databases: ADK creates its own tables in whatever it is pointed at, and
 pointed at the business schema it collides with it.
 
-**2 · The DNS record.** `aziza.danielchaddy.com` as an `A` record to `134.209.140.10`, the
+**2 · The DNS record.** `aziza.danielchaddy.com` as an `A` record to `138.197.240.30`, the
 ingress-nginx LoadBalancer. That zone is hosted at GoDaddy rather than in this DigitalOcean
 account, so the record is created there and `doctl` cannot see it. cert-manager's HTTP-01 challenge
 cannot complete before it resolves, so the certificate stays `False` and the host serves the
@@ -113,8 +113,8 @@ keeps a half-provisioned cluster from turning every push red.
 holding the repository, or `helm rollback` points at an image nobody can rebuild. No `latest` moves.
 
 **Cluster access is a stored kubeconfig**, `KUBECONFIG_B64`. The job selects the context by name
-rather than trusting the kubeconfig's `current-context`, because this account has more than one
-cluster and deploying to the wrong one would succeed. The trade: a stored kubeconfig is long-lived,
+rather than trusting the kubeconfig's `current-context`, because a kubeconfig can hold more than
+one cluster and deploying to the wrong one would succeed. The trade: a stored kubeconfig is long-lived,
 and is rotated like any other secret.
 
 By hand, which is also how a rollback is driven:
