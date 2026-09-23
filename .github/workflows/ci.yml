@@ -141,7 +141,7 @@ jobs:
       RELEASE: aziza
       # Selected by name rather than taken from the kubeconfig's current-context: this account has
       # more than one cluster, and deploying to the wrong one would succeed.
-      KUBE_CONTEXT: do-sfo2-k8s-1-33-1-do-3-sfo2-1755028278626
+      KUBE_CONTEXT: do-nyc2-k8s-nyc2
     steps:
       - uses: actions/checkout@v4
 
